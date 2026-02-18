@@ -218,22 +218,77 @@ async function runTests(): Promise<void> {
     assert(noControllerId.body.error.includes('controllerId'), 'Error mentions controllerId');
     console.log('');
 
-    // Test 14: 404 for Invalid Route
-    console.log('Test 14: 404 for Invalid Route');
+    // Test 14: Controller ID = 0 in protobuf (should be rejected from controller)
+    console.log('Test 14: Controller ID = 0 in protobuf (should be rejected from controller)');
+    // Create a protobuf message with controller_id = 0
+    const protobuf = require('protobufjs');
+    const path = require('path');
+    const protoRoot = await protobuf.load([path.join(process.cwd(), 'bossmarine.proto')]);
+    const HvacConfig = protoRoot.lookupType('BM.HvacConfig');
+    const hvacWithZero = HvacConfig.create({
+      mode: 1,
+      tempreature: 72,
+      humidity: 50,
+      controllerId: 0
+    });
+    const bufferZero = HvacConfig.encode(hvacWithZero).finish();
+    const base64Zero = Buffer.from(bufferZero).toString('base64');
+    
+    const controllerZeroId = await makeRequest('POST', '/controller/heartbeat', {
+      controllerId: 1,
+      protobufPayload: base64Zero
+    });
+    assert(controllerZeroId.status === 400, 'Controller ID = 0 in protobuf returns 400');
+    assert(controllerZeroId.body.error.includes('controller_id'), 'Error mentions controller_id');
+    console.log('');
+
+    // Test 15: Controller ID = 0 in protobuf (should be rejected from mobile)
+    console.log('Test 15: Controller ID = 0 in protobuf (should be rejected from mobile)');
+    const mobileZeroId = await makeRequest('POST', '/mobile/message', {
+      controllerId: 1,
+      protobufPayload: base64Zero
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    assert(mobileZeroId.status === 400, 'Controller ID = 0 in protobuf returns 400 from mobile');
+    assert(mobileZeroId.body.error.includes('controller_id'), 'Error mentions controller_id');
+    console.log('');
+
+    // Test 16: Valid Controller ID in protobuf (should be accepted)
+    console.log('Test 16: Valid Controller ID in protobuf (should be accepted)');
+    const hvacWithValidId = HvacConfig.create({
+      mode: 1,
+      tempreature: 72,
+      humidity: 50,
+      controllerId: 12345
+    });
+    const bufferValidId = HvacConfig.encode(hvacWithValidId).finish();
+    const base64ValidId = Buffer.from(bufferValidId).toString('base64');
+    
+    const controllerValidId = await makeRequest('POST', '/controller/heartbeat', {
+      controllerId: 3,
+      protobufPayload: base64ValidId
+    });
+    assert(controllerValidId.status === 200, 'Valid controller ID in protobuf returns 200');
+    assert(controllerValidId.body.success === true, 'Heartbeat with valid controller ID is successful');
+    console.log('');
+
+    // Test 17: 404 for Invalid Route
+    console.log('Test 17: 404 for Invalid Route');
     const notFound = await makeRequest('GET', '/invalid-route');
     assert(notFound.status === 404, 'Invalid route returns 404');
     console.log('');
 
-    // Test 15: 200 for Empty Message Queue (No Data)
-    console.log('Test 15: 200 for Empty Message Queue (No Data)');
+    // Test 18: 200 for Empty Message Queue (No Data)
+    console.log('Test 18: 200 for Empty Message Queue (No Data)');
     const emptyMessages = await makeRequest('GET', '/controller/messages/999');
     assert(emptyMessages.status === 200, 'Empty message queue returns 200');
     assert(emptyMessages.body.success === true, 'Response indicates success');
     assert(emptyMessages.body.message === null, 'Message is null when queue is empty');
     console.log('');
 
-    // Test 16: 200 for No Controller Status (No Data)
-    console.log('Test 16: 200 for No Controller Status (No Data)');
+    // Test 19: 200 for No Controller Status (No Data)
+    console.log('Test 19: 200 for No Controller Status (No Data)');
     const emptyStatus = await makeRequest('GET', '/mobile/status/999', null, {
       'Authorization': `Bearer ${token}`
     });
@@ -242,8 +297,8 @@ async function runTests(): Promise<void> {
     assert(emptyStatus.body.status === null, 'Status is null when no status available');
     console.log('');
 
-    // Test 17: 200 for No Device Association (No Data)
-    console.log('Test 17: 200 for No Device Association (No Data)');
+    // Test 20: 200 for No Device Association (No Data)
+    console.log('Test 20: 200 for No Device Association (No Data)');
     const emptyAssociation = await makeRequest('GET', '/config/device/999', null, {
       'Authorization': `Bearer ${token}`
     });
