@@ -6,6 +6,7 @@
 
 import express, { Request, Response } from 'express';
 import { Message } from '../types';
+import { validateControllerIdInProtobuf } from '../protobufValidator';
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ const router = express.Router();
  *   protobufPayload: string (base64 encoded protobuf)
  * }
  */
-router.post('/heartbeat', (req: Request, res: Response): void => {
+router.post('/heartbeat', async (req: Request, res: Response): Promise<void> => {
   const { controllerId, protobufPayload } = req.body;
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
 
@@ -46,6 +47,16 @@ router.post('/heartbeat', (req: Request, res: Response): void => {
     console.log('[Controller] Error: protobufPayload is required');
     res.status(400).json({ 
       error: 'protobufPayload is required' 
+    });
+    return;
+  }
+
+  // Validate controller ID in protobuf payload
+  const validation = await validateControllerIdInProtobuf(protobufPayload);
+  if (!validation.valid) {
+    console.log(`[Controller] Error: Rejected message with controller_id = 0 in protobuf payload from controller ${controllerId}`);
+    res.status(400).json({ 
+      error: 'Invalid protobuf message: controller_id cannot be 0' 
     });
     return;
   }
