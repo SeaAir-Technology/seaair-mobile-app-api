@@ -144,19 +144,25 @@ export async function extractControllerIdFromProtobuf(base64Payload: string): Pr
 }
 
 /**
- * Validate that the protobuf message contains a valid controller ID (not 0)
+ * Validate that the protobuf message contains a valid controller ID (not 0 and not missing)
  * @param base64Payload - Base64 encoded protobuf message
- * @returns true if valid (controller_id is not 0 or not present), false if invalid (controller_id is 0)
+ * @returns true if valid (controller_id is present and non-zero), false if invalid (controller_id is 0 or missing)
  */
-export async function validateControllerIdInProtobuf(base64Payload: string): Promise<{ valid: boolean; controllerId: number | null }> {
+export async function validateControllerIdInProtobuf(base64Payload: string): Promise<{ valid: boolean; controllerId: number | null; reason?: string }> {
   const controllerId = await extractControllerIdFromProtobuf(base64Payload);
   
-  // If controller_id is found and is 0, reject the message
-  if (controllerId !== null && controllerId === 0) {
-    console.log('[ProtobufValidator] Rejected message: controller_id is 0');
-    return { valid: false, controllerId: 0 };
+  // If controller_id is not found (missing), reject the message
+  if (controllerId === null) {
+    console.log('[ProtobufValidator] Rejected message: controller_id is missing');
+    return { valid: false, controllerId: null, reason: 'missing' };
   }
   
-  // If controller_id is not found or is non-zero, accept the message
+  // If controller_id is found and is 0, reject the message
+  if (controllerId === 0) {
+    console.log('[ProtobufValidator] Rejected message: controller_id is 0');
+    return { valid: false, controllerId: 0, reason: 'zero' };
+  }
+  
+  // controller_id is present and non-zero, accept the message
   return { valid: true, controllerId };
 }

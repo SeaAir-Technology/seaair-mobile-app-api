@@ -54,9 +54,10 @@ router.post('/heartbeat', async (req: Request, res: Response): Promise<void> => 
   // Validate controller ID in protobuf payload
   const validation = await validateControllerIdInProtobuf(protobufPayload);
   if (!validation.valid) {
-    console.log(`[Controller] Error: Rejected message with controller_id = 0 in protobuf payload from controller ${controllerId}`);
+    const reason = validation.reason === 'missing' ? 'missing' : 'zero (0)';
+    console.log(`[Controller] Error: Rejected message with controller_id ${reason} in protobuf payload from controller ${controllerId}`);
     res.status(400).json({ 
-      error: 'Invalid protobuf message: controller_id cannot be 0' 
+      error: `Invalid protobuf message: controller_id is ${reason === 'missing' ? 'required' : 'invalid (cannot be 0)'}` 
     });
     return;
   }
