@@ -140,13 +140,12 @@ function logHealthData(): void {
   console.log(`Uptime: ${Math.floor(process.uptime())} seconds`);
   console.log('-'.repeat(80));
   console.log('Queue Statistics:');
+  console.log(`  Mobile App Controllers: ${stats.mobileAppControllers}`);
   console.log(`  Mobile App Messages: ${stats.mobileAppMessages}`);
-  console.log(`  Active Controllers: ${stats.activeControllers}`);
+  console.log(`  Controller Messages: ${stats.controllerMessages}`);
   console.log('-'.repeat(80));
   console.log('Rate Limiter Statistics:');
-  console.log(`  Active Users: ${rateLimiterStats.activeUsers}`);
-  console.log(`  Total Requests: ${rateLimiterStats.totalRequests}`);
-  console.log(`  Requests Blocked: ${rateLimiterStats.requestsBlocked}`);
+  console.log(`  Tracked Keys: ${rateLimiterStats.trackedKeys}`);
   console.log('-'.repeat(80));
   console.log('Cognito Configuration:');
   console.log(`  Configured: ${isCognitoConfigured()}`);
