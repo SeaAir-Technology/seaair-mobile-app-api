@@ -218,22 +218,64 @@ async function runTests(): Promise<void> {
     assert(noControllerId.body.error.includes('controllerId'), 'Error mentions controllerId');
     console.log('');
 
-    // Test 14: 404 for Invalid Route
-    console.log('Test 14: 404 for Invalid Route');
+    // Test 14: Controller ID = 0 in JSON (should be rejected from controller)
+    console.log('Test 14: Controller ID = 0 in JSON (should be rejected from controller)');
+    const controllerZeroId = await makeRequest('POST', '/controller/heartbeat', {
+      controllerId: 0,
+      protobufPayload: 'dGVzdC1wYXlsb2Fk'
+    });
+    assert(controllerZeroId.status === 400, 'Controller ID = 0 returns 400');
+    assert(controllerZeroId.body.error.includes('controllerId'), 'Error mentions controllerId');
+    console.log('');
+
+    // Test 15: Controller ID = 0 in JSON (should be rejected from mobile)
+    console.log('Test 15: Controller ID = 0 in JSON (should be rejected from mobile)');
+    const mobileZeroId = await makeRequest('POST', '/mobile/message', {
+      controllerId: 0,
+      protobufPayload: 'dGVzdC1wYXlsb2Fk'
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    assert(mobileZeroId.status === 400, 'Controller ID = 0 returns 400 from mobile');
+    assert(mobileZeroId.body.error.includes('controllerId'), 'Error mentions controllerId');
+    console.log('');
+
+    // Test 16: Valid Controller ID in JSON (should be accepted)
+    console.log('Test 16: Valid Controller ID in JSON (should be accepted)');
+    const controllerValidId = await makeRequest('POST', '/controller/heartbeat', {
+      controllerId: 3,
+      protobufPayload: 'dGVzdC1wYXlsb2Fk'
+    });
+    assert(controllerValidId.status === 200, 'Valid controller ID returns 200');
+    assert(controllerValidId.body.success === true, 'Heartbeat with valid controller ID is successful');
+    console.log('');
+
+    // Test 17: Large valid controller ID (from real logs)
+    console.log('Test 17: Large valid controller ID (from real logs)');
+    const controllerLargeId = await makeRequest('POST', '/controller/heartbeat', {
+      controllerId: 185556358581696,
+      protobufPayload: 'mgEnEiUKFwoDEPoBEgIIASICCAMoQDAvOgRUZXN0EEoYQjjAm9ums5gq'
+    });
+    assert(controllerLargeId.status === 200, 'Large controller ID returns 200');
+    assert(controllerLargeId.body.success === true, 'Heartbeat with large controller ID is successful');
+    console.log('');
+
+    // Test 18: 404 for Invalid Route
+    console.log('Test 18: 404 for Invalid Route');
     const notFound = await makeRequest('GET', '/invalid-route');
     assert(notFound.status === 404, 'Invalid route returns 404');
     console.log('');
 
-    // Test 15: 200 for Empty Message Queue (No Data)
-    console.log('Test 15: 200 for Empty Message Queue (No Data)');
+    // Test 19: 200 for Empty Message Queue (No Data)
+    console.log('Test 19: 200 for Empty Message Queue (No Data)');
     const emptyMessages = await makeRequest('GET', '/controller/messages/999');
     assert(emptyMessages.status === 200, 'Empty message queue returns 200');
     assert(emptyMessages.body.success === true, 'Response indicates success');
     assert(emptyMessages.body.message === null, 'Message is null when queue is empty');
     console.log('');
 
-    // Test 16: 200 for No Controller Status (No Data)
-    console.log('Test 16: 200 for No Controller Status (No Data)');
+    // Test 20: 200 for No Controller Status (No Data)
+    console.log('Test 20: 200 for No Controller Status (No Data)');
     const emptyStatus = await makeRequest('GET', '/mobile/status/999', null, {
       'Authorization': `Bearer ${token}`
     });
@@ -242,8 +284,8 @@ async function runTests(): Promise<void> {
     assert(emptyStatus.body.status === null, 'Status is null when no status available');
     console.log('');
 
-    // Test 17: 200 for No Device Association (No Data)
-    console.log('Test 17: 200 for No Device Association (No Data)');
+    // Test 21: 200 for No Device Association (No Data)
+    console.log('Test 21: 200 for No Device Association (No Data)');
     const emptyAssociation = await makeRequest('GET', '/config/device/999', null, {
       'Authorization': `Bearer ${token}`
     });

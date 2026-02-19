@@ -33,11 +33,11 @@ router.post('/heartbeat', (req: Request, res: Response): void => {
     return;
   }
 
-  // Validate controllerId is a number
-  if (typeof controllerId !== 'number' || !Number.isInteger(controllerId) || controllerId < 0 || !Number.isSafeInteger(controllerId)) {
-    console.log('[Controller] Error: controllerId must be a safe non-negative integer');
+  // Validate controllerId is a number and not zero
+  if (typeof controllerId !== 'number' || !Number.isInteger(controllerId) || controllerId <= 0 || !Number.isSafeInteger(controllerId)) {
+    console.log('[Controller] Error: controllerId must be a safe positive integer (cannot be 0)');
     res.status(400).json({ 
-      error: 'controllerId must be a safe non-negative integer (within JavaScript safe integer range)' 
+      error: 'controllerId must be a safe positive integer (cannot be 0)' 
     });
     return;
   }
