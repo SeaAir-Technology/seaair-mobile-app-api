@@ -218,78 +218,46 @@ async function runTests(): Promise<void> {
     assert(noControllerId.body.error.includes('controllerId'), 'Error mentions controllerId');
     console.log('');
 
-    // Test 14: Controller ID = 0 in protobuf (should be rejected from controller)
-    console.log('Test 14: Controller ID = 0 in protobuf (should be rejected from controller)');
-    // Create a protobuf message with controller_id = 0
-    const protobuf = require('protobufjs');
-    const path = require('path');
-    const protoRoot = await protobuf.load([path.join(process.cwd(), 'bossmarine.proto')]);
-    const HvacConfig = protoRoot.lookupType('BM.HvacConfig');
-    const hvacWithZero = HvacConfig.create({
-      mode: 1,
-      tempreature: 72,
-      humidity: 50,
-      controllerId: 0
-    });
-    const bufferZero = HvacConfig.encode(hvacWithZero).finish();
-    const base64Zero = Buffer.from(bufferZero).toString('base64');
-    
+    // Test 14: Controller ID = 0 in JSON (should be rejected from controller)
+    console.log('Test 14: Controller ID = 0 in JSON (should be rejected from controller)');
     const controllerZeroId = await makeRequest('POST', '/controller/heartbeat', {
-      controllerId: 1,
-      protobufPayload: base64Zero
+      controllerId: 0,
+      protobufPayload: 'dGVzdC1wYXlsb2Fk'
     });
-    assert(controllerZeroId.status === 400, 'Controller ID = 0 in protobuf returns 400');
-    assert(controllerZeroId.body.error.includes('controller_id'), 'Error mentions controller_id');
+    assert(controllerZeroId.status === 400, 'Controller ID = 0 returns 400');
+    assert(controllerZeroId.body.error.includes('controllerId'), 'Error mentions controllerId');
     console.log('');
 
-    // Test 15: Controller ID = 0 in protobuf (should be rejected from mobile)
-    console.log('Test 15: Controller ID = 0 in protobuf (should be rejected from mobile)');
+    // Test 15: Controller ID = 0 in JSON (should be rejected from mobile)
+    console.log('Test 15: Controller ID = 0 in JSON (should be rejected from mobile)');
     const mobileZeroId = await makeRequest('POST', '/mobile/message', {
-      controllerId: 1,
-      protobufPayload: base64Zero
+      controllerId: 0,
+      protobufPayload: 'dGVzdC1wYXlsb2Fk'
     }, {
       'Authorization': `Bearer ${token}`
     });
-    assert(mobileZeroId.status === 400, 'Controller ID = 0 in protobuf returns 400 from mobile');
-    assert(mobileZeroId.body.error.includes('controller_id'), 'Error mentions controller_id');
+    assert(mobileZeroId.status === 400, 'Controller ID = 0 returns 400 from mobile');
+    assert(mobileZeroId.body.error.includes('controllerId'), 'Error mentions controllerId');
     console.log('');
 
-    // Test 16: Valid Controller ID in protobuf (should be accepted)
-    console.log('Test 16: Valid Controller ID in protobuf (should be accepted)');
-    const hvacWithValidId = HvacConfig.create({
-      mode: 1,
-      tempreature: 72,
-      humidity: 50,
-      controllerId: 12345
-    });
-    const bufferValidId = HvacConfig.encode(hvacWithValidId).finish();
-    const base64ValidId = Buffer.from(bufferValidId).toString('base64');
-    
+    // Test 16: Valid Controller ID in JSON (should be accepted)
+    console.log('Test 16: Valid Controller ID in JSON (should be accepted)');
     const controllerValidId = await makeRequest('POST', '/controller/heartbeat', {
       controllerId: 3,
-      protobufPayload: base64ValidId
+      protobufPayload: 'dGVzdC1wYXlsb2Fk'
     });
-    assert(controllerValidId.status === 200, 'Valid controller ID in protobuf returns 200');
+    assert(controllerValidId.status === 200, 'Valid controller ID returns 200');
     assert(controllerValidId.body.success === true, 'Heartbeat with valid controller ID is successful');
     console.log('');
 
-    // Test 17: Missing Controller ID in protobuf (should be rejected)
-    console.log('Test 17: Missing Controller ID in protobuf (should be rejected)');
-    const hvacWithoutId = HvacConfig.create({
-      mode: 1,
-      tempreature: 72,
-      humidity: 50
-      // No controllerId field
+    // Test 17: Large valid controller ID (from real logs)
+    console.log('Test 17: Large valid controller ID (from real logs)');
+    const controllerLargeId = await makeRequest('POST', '/controller/heartbeat', {
+      controllerId: 185556358581696,
+      protobufPayload: 'mgEnEiUKFwoDEPoBEgIIASICCAMoQDAvOgRUZXN0EEoYQjjAm9ums5gq'
     });
-    const bufferWithoutId = HvacConfig.encode(hvacWithoutId).finish();
-    const base64WithoutId = Buffer.from(bufferWithoutId).toString('base64');
-    
-    const controllerMissingId = await makeRequest('POST', '/controller/heartbeat', {
-      controllerId: 4,
-      protobufPayload: base64WithoutId
-    });
-    assert(controllerMissingId.status === 400, 'Missing controller ID in protobuf returns 400');
-    assert(controllerMissingId.body.error.includes('required'), 'Error mentions required');
+    assert(controllerLargeId.status === 200, 'Large controller ID returns 200');
+    assert(controllerLargeId.body.success === true, 'Heartbeat with large controller ID is successful');
     console.log('');
 
     // Test 18: 404 for Invalid Route

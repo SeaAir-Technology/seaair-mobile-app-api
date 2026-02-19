@@ -6,7 +6,6 @@
 
 import express, { Request, Response } from 'express';
 import { Message } from '../types';
-import { validateControllerIdInProtobuf } from '../protobufValidator';
 
 const router = express.Router();
 
@@ -18,7 +17,7 @@ const router = express.Router();
  *   protobufPayload: string (base64 encoded protobuf)
  * }
  */
-router.post('/heartbeat', async (req: Request, res: Response): Promise<void> => {
+router.post('/heartbeat', (req: Request, res: Response): void => {
   const { controllerId, protobufPayload } = req.body;
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
 
@@ -34,11 +33,11 @@ router.post('/heartbeat', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
-  // Validate controllerId is a number
-  if (typeof controllerId !== 'number' || !Number.isInteger(controllerId) || controllerId < 0 || !Number.isSafeInteger(controllerId)) {
-    console.log('[Controller] Error: controllerId must be a safe non-negative integer');
+  // Validate controllerId is a number and not zero
+  if (typeof controllerId !== 'number' || !Number.isInteger(controllerId) || controllerId <= 0 || !Number.isSafeInteger(controllerId)) {
+    console.log('[Controller] Error: controllerId must be a safe positive integer (cannot be 0)');
     res.status(400).json({ 
-      error: 'controllerId must be a safe non-negative integer (within JavaScript safe integer range)' 
+      error: 'controllerId must be a safe positive integer (cannot be 0)' 
     });
     return;
   }
@@ -47,17 +46,6 @@ router.post('/heartbeat', async (req: Request, res: Response): Promise<void> => 
     console.log('[Controller] Error: protobufPayload is required');
     res.status(400).json({ 
       error: 'protobufPayload is required' 
-    });
-    return;
-  }
-
-  // Validate controller ID in protobuf payload
-  const validation = await validateControllerIdInProtobuf(protobufPayload);
-  if (!validation.valid) {
-    const reason = validation.reason === 'missing' ? 'missing' : 'zero (0)';
-    console.log(`[Controller] Error: Rejected message with controller_id ${reason} in protobuf payload from controller ${controllerId}`);
-    res.status(400).json({ 
-      error: `Invalid protobuf message: controller_id is ${reason === 'missing' ? 'required' : 'invalid (cannot be 0)'}` 
     });
     return;
   }
