@@ -75,7 +75,6 @@ async function runTests(): Promise<void> {
     const health = await makeRequest('GET', '/health');
     assert(health.status === 200, 'Health endpoint returns 200');
     assert(health.body.status === 'healthy', 'Health status is healthy');
-    assert(typeof health.body.queues === 'object', 'Health includes queue stats');
     console.log('');
 
     // Test 2: Detailed health check (empty queues)
@@ -196,7 +195,7 @@ async function runTests(): Promise<void> {
 
     // Test 11: Messages Are Queued Correctly
     console.log('Test 11: Messages Are Queued Correctly');
-    const checkHealth = await makeRequest('GET', '/health');
+    const checkHealth = await makeRequest('GET', '/health-detail');
     // We sent 23 messages in test 10 that succeeded
     assert(checkHealth.body.queues.mobileAppMessages === 23, `All 23 messages are in queue (got ${checkHealth.body.queues.mobileAppMessages})`);
     console.log('');
