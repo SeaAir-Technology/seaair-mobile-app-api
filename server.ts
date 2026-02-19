@@ -11,7 +11,7 @@ import controllerRoutes from './src/routes/controller';
 import mobileRoutes from './src/routes/mobile';
 import configRoutes from './src/routes/config';
 import { isCognitoConfigured, COGNITO_USER_POOL_ID, AWS_REGION } from './src/auth';
-import { HealthResponse, HealthDetailResponse, QueueContents, Message } from './src/types';
+import { HealthDetailResponse, QueueContents, Message } from './src/types';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
@@ -41,23 +41,7 @@ app.use('/config', configRoutes);
 
 // Health check endpoint
 app.get('/health', (_req: Request, res: Response): void => {
-  const stats = app.locals.messageQueue.getStats();
-  const rateLimiterStats = app.locals.rateLimiter.getStats();
-  
-  const response: HealthResponse = {
-    status: 'healthy',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    queues: stats,
-    rateLimiter: rateLimiterStats,
-    cognito: {
-      configured: isCognitoConfigured(),
-      userPoolId: COGNITO_USER_POOL_ID || 'not-set',
-      region: AWS_REGION
-    }
-  };
-
-  res.status(200).json(response);
+  res.status(200).json({ status: 'healthy' });
 });
 
 // Detailed health check endpoint with queue contents
@@ -144,6 +128,33 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void =>
   });
 });
 
+// Function to log health data
+function logHealthData(): void {
+  const stats = app.locals.messageQueue.getStats();
+  const rateLimiterStats = app.locals.rateLimiter.getStats();
+  
+  console.log('\n' + '='.repeat(80));
+  console.log('[Health Monitor] System Health Status');
+  console.log('='.repeat(80));
+  console.log(`Timestamp: ${new Date().toISOString()}`);
+  console.log(`Uptime: ${Math.floor(process.uptime())} seconds`);
+  console.log('-'.repeat(80));
+  console.log('Queue Statistics:');
+  console.log(`  Mobile App Messages: ${stats.mobileAppMessages}`);
+  console.log(`  Active Controllers: ${stats.activeControllers}`);
+  console.log('-'.repeat(80));
+  console.log('Rate Limiter Statistics:');
+  console.log(`  Active Users: ${rateLimiterStats.activeUsers}`);
+  console.log(`  Total Requests: ${rateLimiterStats.totalRequests}`);
+  console.log(`  Requests Blocked: ${rateLimiterStats.requestsBlocked}`);
+  console.log('-'.repeat(80));
+  console.log('Cognito Configuration:');
+  console.log(`  Configured: ${isCognitoConfigured()}`);
+  console.log(`  User Pool ID: ${COGNITO_USER_POOL_ID || 'not-set'}`);
+  console.log(`  Region: ${AWS_REGION}`);
+  console.log('='.repeat(80) + '\n');
+}
+
 // Start server
 app.listen(PORT, () => {
   console.log(`[Server] SeaAir Mobile App API running on port ${PORT}`);
@@ -152,6 +163,10 @@ app.listen(PORT, () => {
   console.log(`[Server] Configuration routes available at /config`);
   console.log(`[Server] Health check available at /health`);
   console.log(`[Server] Detailed health check available at /health-detail`);
+  
+  // Start periodic health monitoring (every 60 seconds)
+  setInterval(logHealthData, 60000);
+  console.log('[Server] Health monitoring started - logging every 60 seconds');
 });
 
 export default app;
