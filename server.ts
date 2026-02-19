@@ -154,6 +154,9 @@ function logHealthData(): void {
   console.log('='.repeat(80) + '\n');
 }
 
+// Store interval reference for cleanup
+let healthMonitorInterval: NodeJS.Timeout | null = null;
+
 // Start server
 app.listen(PORT, () => {
   console.log(`[Server] SeaAir Mobile App API running on port ${PORT}`);
@@ -164,8 +167,27 @@ app.listen(PORT, () => {
   console.log(`[Server] Detailed health check available at /health-detail`);
   
   // Start periodic health monitoring (every 60 seconds)
-  setInterval(logHealthData, 60000);
+  healthMonitorInterval = setInterval(logHealthData, 60000);
   console.log('[Server] Health monitoring started - logging every 60 seconds');
+});
+
+// Graceful shutdown handler
+process.on('SIGTERM', () => {
+  console.log('[Server] SIGTERM received, shutting down gracefully');
+  if (healthMonitorInterval) {
+    clearInterval(healthMonitorInterval);
+    console.log('[Server] Health monitoring stopped');
+  }
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('[Server] SIGINT received, shutting down gracefully');
+  if (healthMonitorInterval) {
+    clearInterval(healthMonitorInterval);
+    console.log('[Server] Health monitoring stopped');
+  }
+  process.exit(0);
 });
 
 export default app;
