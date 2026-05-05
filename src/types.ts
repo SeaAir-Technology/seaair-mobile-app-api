@@ -2,45 +2,36 @@
  * Shared type definitions for the SeaAir Mobile App API
  */
 
-/**
- * Message sender information
- */
 export interface MessageSender {
   ip: string;
   type: 'mobile' | 'controller';
   authId?: string;
 }
 
-/**
- * Message structure
- */
 export interface Message {
   timestamp: string;
   sender: MessageSender;
-  controllerId: number; // Non-negative integer within JavaScript safe integer range (0 to 2^53-1)
+  controllerId: number;
   protobufPayload: string;
   expiresAt?: number;
+  // Stream-specific fields populated when reading from Redis Streams.
+  streamId?: string;
+  streamKey?: string;
 }
 
-/**
- * Queue statistics
- */
 export interface QueueStats {
   mobileAppControllers: number;
   mobileAppMessages: number;
   controllerMessages: number;
+  brokerType?: 'memory' | 'redis';
+  redisConnected?: boolean;
+  totalStreams?: number;
 }
 
-/**
- * Rate limiter statistics
- */
 export interface RateLimiterStats {
   trackedKeys: number;
 }
 
-/**
- * Authenticated user information
- */
 export interface AuthInfo {
   sub: string;
   username?: string;
@@ -48,18 +39,12 @@ export interface AuthInfo {
   [key: string]: any;
 }
 
-/**
- * Cognito configuration status
- */
 export interface CognitoStatus {
   configured: boolean;
   userPoolId: string;
   region: string;
 }
 
-/**
- * Health check response
- */
 export interface HealthResponse {
   status: string;
   uptime: number;
@@ -69,21 +54,11 @@ export interface HealthResponse {
   cognito: CognitoStatus;
 }
 
-/**
- * Queue contents for detailed health check
- */
 export interface QueueContents {
-  mobileAppQueue: {
-    [controllerId: string]: Message[];
-  };
-  controllerQueue: {
-    [controllerId: string]: Message;
-  };
+  mobileAppQueue: { [controllerId: string]: Message[] };
+  controllerQueue: { [controllerId: string]: Message };
 }
 
-/**
- * Detailed health check response
- */
 export interface HealthDetailResponse {
   status: string;
   uptime: number;
@@ -92,4 +67,32 @@ export interface HealthDetailResponse {
   queueContents: QueueContents;
   rateLimiter: RateLimiterStats;
   cognito: CognitoStatus;
+  broker: {
+    type: 'memory' | 'redis';
+    connected: boolean;
+    info?: any;
+  };
+}
+
+/**
+ * Common interface implemented by both the legacy in-memory MessageQueue
+ * and the Redis-backed RedisStreamQueue. Methods are async so callers can
+ * transparently swap implementations via the MESSAGE_BROKER env var.
+ */
+export interface IMessageBroker {
+  addMobileAppMessage(controllerId: number, message: Message): Promise<void>;
+  addControllerMessage(controllerId: number, message: Message): Promise<void>;
+  getMobileAppMessage(controllerId: number): Promise<Message | null>;
+  getControllerMessage(controllerId: number): Promise<Message | null>;
+  getStats(): Promise<QueueStats>;
+  getAllQueueContents(): Promise<{
+    mobileAppQueue: Map<number, Message[]>;
+    controllerQueue: Map<number, Message>;
+  }>;
+  ping(): Promise<boolean>;
+  destroy(): Promise<void>;
+  // Optional inspection methods (Redis only — memory broker is undefined here).
+  listStreamKeys?(): Promise<string[]>;
+  getStreamHistory?(controllerId: number, direction: 'fw2mobile' | 'mobile2fw', count: number): Promise<Message[]>;
+  getStreamLength?(controllerId: number, direction: 'fw2mobile' | 'mobile2fw'): Promise<number>;
 }
