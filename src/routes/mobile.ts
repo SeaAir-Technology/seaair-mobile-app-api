@@ -1,7 +1,6 @@
 /**
  * Mobile App Routes
- * Routes used by the mobile application
- * Requires JWT authentication
+ * Routes used by the mobile application. Requires JWT authentication.
  */
 
 import express, { Request, Response } from 'express';
@@ -12,159 +11,95 @@ const router = express.Router();
 
 /**
  * POST /mobile/message
- * Mobile app sends message to controller
- * Requires JWT authentication
- * Body: {
- *   controllerId: number (required),
- *   protobufPayload: string (base64 encoded protobuf)
- * }
+ * Append a command to stream:mobile2fw:{controllerId}.
  */
-router.post('/message', verifyJWT, (req: Request, res: Response): void => {
+router.post('/message', verifyJWT, async (req: Request, res: Response): Promise<void> => {
   const { controllerId, protobufPayload } = req.body;
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
   const authId = req.auth?.sub || req.auth?.userId;
 
   console.log(`[Mobile] Message received from user ${authId} at ${ip} for controller ${controllerId}`);
-  console.log(`[Mobile] Payload:`, JSON.stringify(req.body, null, 2));
 
-  // Validate required fields
   if (controllerId === undefined || controllerId === null) {
-    console.log('[Mobile] Error: controllerId is required');
-    res.status(400).json({ 
-      error: 'controllerId is required' 
-    });
+    res.status(400).json({ error: 'controllerId is required' });
     return;
   }
-
-  // Validate controllerId is a number and not zero
   if (typeof controllerId !== 'number' || !Number.isInteger(controllerId) || controllerId <= 0 || !Number.isSafeInteger(controllerId)) {
-    console.log('[Mobile] Error: controllerId must be a safe positive integer (cannot be 0)');
-    res.status(400).json({ 
-      error: 'controllerId must be a safe positive integer (cannot be 0)' 
-    });
+    res.status(400).json({ error: 'controllerId must be a safe positive integer (cannot be 0)' });
     return;
   }
-
   if (!protobufPayload) {
-    console.log('[Mobile] Error: protobufPayload is required');
-    res.status(400).json({ 
-      error: 'protobufPayload is required' 
-    });
+    res.status(400).json({ error: 'protobufPayload is required' });
     return;
   }
 
-  // Rate limiting check - track per account and per IP to any controller
   const authRateLimitKey = `auth:${authId}`;
   if (!req.app.locals.rateLimiter.checkLimit(authRateLimitKey)) {
-    console.log(`[Mobile] Rate limit exceeded for user ${authId}`);
-    res.status(429).json({ 
-      error: 'Rate limit exceeded',
-      message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.'
-    });
+    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.' });
     return;
   }
-
-  // Also check rate limiting by IP
   const ipRateLimitKey = `ip:${ip}`;
   if (!req.app.locals.rateLimiter.checkLimit(ipRateLimitKey)) {
-    console.log(`[Mobile] Rate limit exceeded for IP ${ip}`);
-    res.status(429).json({ 
-      error: 'Rate limit exceeded',
-      message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.'
-    });
+    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.' });
     return;
   }
-
-  // Record this request for both auth and IP rate limiting
   req.app.locals.rateLimiter.recordRequest(authRateLimitKey);
   req.app.locals.rateLimiter.recordRequest(ipRateLimitKey);
 
-  // Create message object
   const message: Message = {
     timestamp: new Date().toISOString(),
-    sender: {
-      ip: ip,
-      type: 'mobile',
-      authId: authId
-    },
-    controllerId: controllerId,
-    protobufPayload: protobufPayload
+    sender: { ip, type: 'mobile', authId },
+    controllerId,
+    protobufPayload
   };
 
-  // Add to mobile app queue
-  req.app.locals.messageQueue.addMobileAppMessage(controllerId, message);
-
-  res.status(200).json({ 
-    success: true,
-    message: 'Message queued for controller',
-    controllerId: controllerId
-  });
+  try {
+    await req.app.locals.messageBroker.addMobileAppMessage(controllerId, message);
+    res.status(200).json({ success: true, message: 'Message queued for controller', controllerId });
+  } catch (err: any) {
+    console.error(`[Mobile] Failed to queue message: ${err.message}`);
+    res.status(500).json({ error: 'Broker write failed', message: err.message });
+  }
 });
 
 /**
  * GET /mobile/status/:controllerId
- * Mobile app retrieves latest controller status
- * Requires JWT authentication
+ * Mobile reads latest controller heartbeat (XREVRANGE COUNT 1 with 11-min freshness window).
  */
-router.get('/status/:controllerId', verifyJWT, (req: Request, res: Response): void => {
-  const controllerIdParam = req.params.controllerId;
-  const controllerId = parseInt(controllerIdParam, 10);
+router.get('/status/:controllerId', verifyJWT, async (req: Request, res: Response): Promise<void> => {
+  const controllerId = parseInt(req.params.controllerId, 10);
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
   const authId = req.auth?.sub || req.auth?.userId;
 
-  console.log(`[Mobile] Status request from user ${authId} at ${ip} for controller ${controllerId}`);
-
   if (isNaN(controllerId) || controllerId < 0) {
-    res.status(400).json({ 
-      error: 'controllerId must be a valid non-negative integer' 
-    });
+    res.status(400).json({ error: 'controllerId must be a valid non-negative integer' });
     return;
   }
 
-  // Rate limiting check - track per account and per IP
   const authRateLimitKey = `auth:${authId}`;
   if (!req.app.locals.rateLimiter.checkLimit(authRateLimitKey)) {
-    console.log(`[Mobile] Rate limit exceeded for user ${authId}`);
-    res.status(429).json({ 
-      error: 'Rate limit exceeded',
-      message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.'
-    });
+    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this account.' });
     return;
   }
-
-  // Also check IP rate limiting
   const ipRateLimitKey = `ip:${ip}`;
   if (!req.app.locals.rateLimiter.checkLimit(ipRateLimitKey)) {
-    console.log(`[Mobile] Rate limit exceeded for IP ${ip}`);
-    res.status(429).json({ 
-      error: 'Rate limit exceeded',
-      message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.'
-    });
+    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this IP.' });
     return;
   }
-
-  // Record this request for both auth and IP rate limiting
   req.app.locals.rateLimiter.recordRequest(authRateLimitKey);
   req.app.locals.rateLimiter.recordRequest(ipRateLimitKey);
 
-  // Retrieve controller status message
-  const message = req.app.locals.messageQueue.getControllerMessage(controllerId);
-
-  if (!message) {
-    console.log(`[Mobile] No status available for controller ${controllerId}`);
-    res.status(200).json({ 
-      success: true,
-      status: null
-    });
-    return;
+  try {
+    const message = await req.app.locals.messageBroker.getControllerMessage(controllerId);
+    if (!message) {
+      res.status(200).json({ success: true, status: null });
+      return;
+    }
+    res.status(200).json({ success: true, status: message });
+  } catch (err: any) {
+    console.error(`[Mobile] Failed to read status: ${err.message}`);
+    res.status(500).json({ error: 'Broker read failed', message: err.message });
   }
-
-  console.log(`[Mobile] Returning status for controller ${controllerId}`);
-  
-  res.status(200).json({
-    success: true,
-    status: message
-  });
 });
 
 export default router;
