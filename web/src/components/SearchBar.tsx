@@ -113,7 +113,7 @@ export function SearchBar({
               className="text-ink-500 hover:text-ink-900"
               aria-label="Remove filter"
             >
-              \u00d7
+              {'\u00d7'}
             </button>
           </span>
         ))}
