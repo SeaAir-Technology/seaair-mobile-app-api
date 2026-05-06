@@ -1,12 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The SPA is served by the Express API at /dashboard/, so all asset URLs
-// must be prefixed with /dashboard/. In dev, the Vite dev server also
-// serves under /dashboard/ and proxies /dashboard/api/* through to the
-// API on localhost:3000.
+// SPA is served at the root of dashboard.seaair.com (a separate App Runner
+// custom-domain alias on the same service as the rest of the API). The
+// backend API continues to be exposed under /dashboard/api/* on the same
+// origin so no CORS configuration is needed.
 export default defineConfig({
-  base: '/dashboard/',
+  base: '/',
   plugins: [react()],
   build: {
     outDir: 'dist',
@@ -15,6 +15,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Forward backend calls to the API in dev. The path on the API side
+      // is unchanged (/dashboard/api/...), so the SPA's VITE_API_BASE
+      // stays the same in dev and prod.
       '/dashboard/api': {
         target: 'http://localhost:3000',
         changeOrigin: false,

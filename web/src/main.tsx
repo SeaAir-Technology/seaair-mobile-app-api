@@ -17,11 +17,12 @@ const queryClient = new QueryClient({
   },
 });
 
+// SPA serves at the host root (dashboard.seaair.com/), so no router basename.
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AuthProvider {...oidcConfig}>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter basename="/dashboard">
+        <BrowserRouter>
           <App />
         </BrowserRouter>
       </QueryClientProvider>
