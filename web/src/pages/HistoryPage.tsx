@@ -20,7 +20,7 @@ export function HistoryPage(): JSX.Element {
   const [page, setPage] = useState(0);
   // The History page only shows event-stream metadata (no per-event payload
   // is returned by the firehose endpoint), so payload-filter chips don't
-  // apply here \u2014 the SearchBar still requires the props for now, kept inert.
+  // apply here — the SearchBar still requires the props for now, kept inert.
   const [filters, setFilters] = useState<PayloadFilter[]>([]);
   const [filterText, setFilterText] = useState('');
 
@@ -74,7 +74,7 @@ export function HistoryPage(): JSX.Element {
         </div>
         {isLoading && (
           <div className="p-4">
-            <Spinner label="Loading history\u2026" />
+            <Spinner label="Loading history…" />
           </div>
         )}
         {error && (

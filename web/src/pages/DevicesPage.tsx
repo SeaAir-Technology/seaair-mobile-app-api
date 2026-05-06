@@ -96,7 +96,7 @@ function DeviceListColumn({
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE
   );
-  const windowLabel = data ? formatWindow(data.windowMs) : '\u2026';
+  const windowLabel = data ? formatWindow(data.windowMs) : '…';
 
   return (
     <div className="overflow-y-auto flex flex-col">
@@ -114,7 +114,7 @@ function DeviceListColumn({
       </div>
       {isLoading && (
         <div className="p-4">
-          <Spinner label="Loading devices\u2026" />
+          <Spinner label="Loading devices…" />
         </div>
       )}
       {error && (
@@ -207,7 +207,7 @@ function DeviceRow({
           </span>
         </div>
         <div className="text-xs text-ink-500 mt-1 font-mono truncate">
-          {device.alive ? 'Online' : 'Stale'} \u00b7 last seen{' '}
+          {device.alive ? 'Online' : 'Stale'} · last seen{' '}
           {formatTimestamp(device.lastSeenAt)}
         </div>
       </button>
