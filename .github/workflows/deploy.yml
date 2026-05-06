@@ -1,0 +1,41 @@
+name: Build and Deploy to App Runner
+on:
+  push:
+    branches: [feature/redis-streams-broker]
+    paths-ignore: ['**.md', '.gitignore', 'docs/**']
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: seaair-mobile-app-api
+  AWS_ACCOUNT_ID: '120569623207'
+  APP_RUNNER_SERVICE_NAME: seaair-mobile-app-api
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::120569623207:role/seaair-gh-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+      - env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPOSITORY: ${{ env.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG -t $REGISTRY/$REPOSITORY:latest .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker push $REGISTRY/$REPOSITORY:latest
+      - run: |
+          set -e
+          SERVICE_ARN=$(aws apprunner list-services --region $AWS_REGION --query "ServiceSummaryList[?ServiceName=='$APP_RUNNER_SERVICE_NAME'].ServiceArn | [0]" --output text)
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "None" ]; then
+            echo "App Runner service not found yet; first creation will pick up :latest"
+            exit 0
+          fi
+          aws apprunner start-deployment --region $AWS_REGION --service-arn "$SERVICE_ARN"
