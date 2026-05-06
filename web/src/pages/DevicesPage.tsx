@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useDeviceList } from '../hooks/useDeviceList';
 import { SearchBar } from '../components/SearchBar';
 import { Spinner } from '../components/Spinner';
+import { BeaconIcon, StatusDot } from '../components/Icons';
 import { formatRelativeTime, formatTimestamp, formatWindow } from '../lib/format';
 import type { DeviceSummary, PayloadFilter } from '../lib/types';
 import { DeviceDetail } from './DeviceDetail';
@@ -95,7 +96,7 @@ function DeviceListColumn({
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE
   );
-  const windowLabel = data ? formatWindow(data.windowMs) : '…';
+  const windowLabel = data ? formatWindow(data.windowMs) : '\u2026';
 
   return (
     <div className="overflow-y-auto flex flex-col">
@@ -113,7 +114,7 @@ function DeviceListColumn({
       </div>
       {isLoading && (
         <div className="p-4">
-          <Spinner label="Loading devices…" />
+          <Spinner label="Loading devices\u2026" />
         </div>
       )}
       {error && (
@@ -180,30 +181,34 @@ function DeviceRow({
     <li>
       <button
         onClick={onClick}
-        className={`w-full text-left px-4 py-3 hover:bg-ink-50 ${
-          active ? 'bg-ink-100' : ''
-        } ${device.beacon ? 'border-l-4 border-l-amber-500' : ''}`}
+        className={`w-full text-left px-4 py-2.5 hover:bg-ink-50 transition-colors border-l-4 ${
+          device.beacon ? 'border-l-amber-500' : 'border-l-transparent'
+        } ${active ? 'bg-ink-100' : ''}`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <StatusDot tone={device.alive ? 'live' : 'stale'} />
           {device.beacon && (
             <span
-              className="inline-flex items-center bg-amber-100 text-amber-800 border border-amber-300 rounded px-1.5 py-0.5 text-[10px] font-medium"
+              className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-300 rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0"
               title="Firmware has raised a beacon flag in its latest heartbeat"
             >
+              <BeaconIcon className="text-amber-700" />
               Beacon raised
             </span>
           )}
-          <span className="font-mono text-sm">
+          <span className="font-mono text-sm truncate">
             Controller #{device.controllerId}
           </span>
           <span
-            className={`ml-auto text-xs ${
-              device.alive ? 'text-emerald-700' : 'text-ink-500'
-            }`}
+            className="ml-auto text-xs text-ink-500 shrink-0"
             title={formatTimestamp(device.lastSeenAt)}
           >
-            Last message {formatRelativeTime(device.lastSeenAt)}
+            {formatRelativeTime(device.lastSeenAt)}
           </span>
+        </div>
+        <div className="text-xs text-ink-500 mt-1 font-mono truncate">
+          {device.alive ? 'Online' : 'Stale'} \u00b7 last seen{' '}
+          {formatTimestamp(device.lastSeenAt)}
         </div>
       </button>
     </li>

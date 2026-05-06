@@ -20,7 +20,7 @@ export function HistoryPage(): JSX.Element {
   const [page, setPage] = useState(0);
   // The History page only shows event-stream metadata (no per-event payload
   // is returned by the firehose endpoint), so payload-filter chips don't
-  // apply here — the SearchBar still requires the props for now, kept inert.
+  // apply here \u2014 the SearchBar still requires the props for now, kept inert.
   const [filters, setFilters] = useState<PayloadFilter[]>([]);
   const [filterText, setFilterText] = useState('');
 
@@ -74,7 +74,7 @@ export function HistoryPage(): JSX.Element {
         </div>
         {isLoading && (
           <div className="p-4">
-            <Spinner label="Loading history…" />
+            <Spinner label="Loading history\u2026" />
           </div>
         )}
         {error && (
@@ -139,20 +139,22 @@ function HistoryRow({
     <li>
       <button
         onClick={onClick}
-        className="w-full text-left px-4 py-2 hover:bg-ink-50"
+        className="w-full text-left px-4 py-2.5 hover:bg-ink-50 transition-colors border-l-4 border-l-transparent"
       >
-        <div className="flex items-center gap-2 text-xs text-ink-500">
+        <div className="flex items-center gap-2 min-w-0">
           <DirectionBadge direction={entry.direction} />
-          <span className="font-mono">Controller #{entry.controllerId}</span>
+          <span className="font-mono text-sm truncate">
+            Controller #{entry.controllerId}
+          </span>
           <span
-            className="ml-auto"
+            className="ml-auto text-xs text-ink-500 shrink-0"
             title={formatTimestamp(entry.timestamp)}
           >
             {formatRelativeTime(entry.timestamp)}
           </span>
         </div>
-        <div className="text-xs text-ink-600 mt-0.5 font-mono truncate">
-          {entry.streamId}
+        <div className="text-xs text-ink-500 mt-1 font-mono truncate">
+          Stream entry {entry.streamId}
         </div>
       </button>
     </li>
