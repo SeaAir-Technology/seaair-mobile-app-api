@@ -7,6 +7,7 @@
 
 import express, { Request, Response, NextFunction, Application } from 'express';
 import morgan from 'morgan';
+import path from 'path';
 import { createMessageBroker, getBrokerType } from './src/messageBroker';
 import { closeRedisClient } from './src/redisClient';
 import { RateLimiter } from './src/rateLimiter';
@@ -38,9 +39,41 @@ app.use('/config', configRoutes);
 app.use('/admin', adminRoutes);
 
 // Dashboard backend: gated by Cognito JWT + dashboard-admin group membership.
-// Served on the same App Runner service (reachable via api.seaair.com or
-// dashboard.seaair.com — App Runner doesn't host-discriminate by default).
+// Same App Runner service as the SPA below, so requests from the SPA are
+// same-origin even when the SPA is reached via a different custom domain
+// (App Runner doesn't host-discriminate by default).
 app.use('/dashboard/api', requireDashboardAdmin, dashboardRoutes);
+
+// Dashboard SPA. Served at the host root so users on dashboard.seaair.com see
+// https://dashboard.seaair.com/ rather than /dashboard/. The static middleware
+// is mounted AFTER all API routers so the API still wins on its own paths;
+// static only sees requests that didn't match a registered route.
+const WEB_DIST = path.resolve(process.cwd(), 'web/dist');
+app.use(express.static(WEB_DIST));
+
+// SPA HTML fallback for client-side routing. Triggers on GETs that didn't
+// match any API router or static file. Two safety checks keep API 404s from
+// being masked with index.html:
+//   1. Explicit skip for /dashboard/api (the only API path a SPA dev would
+//      plausibly hit with an HTML-accepting client).
+//   2. Accept-header check: real browser navigations send 'text/html'; API
+//      clients send 'application/json' or '*/*' and fall through to 404.
+app.use((req: Request, res: Response, next: NextFunction): void => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (
+    req.path === '/dashboard/api' ||
+    req.path.startsWith('/dashboard/api/') ||
+    req.path === '/health' ||
+    req.path === '/health-detail'
+  ) {
+    return next();
+  }
+  const accept = req.headers.accept || '';
+  if (!accept.includes('text/html')) return next();
+  res.sendFile(path.join(WEB_DIST, 'index.html'), (err) => {
+    if (err) next();
+  });
+});
 
 app.get('/health', async (_req: Request, res: Response): Promise<void> => {
   const broker = app.locals.messageBroker as IMessageBroker | undefined;
@@ -137,7 +170,11 @@ async function start(): Promise<void> {
 
   app.listen(PORT, () => {
     console.log(`[Server] Listening on port ${PORT}`);
-    console.log('[Server] Routes: /controller /mobile /mobile/beacon /config /admin /dashboard/api /health /health-detail');
+    console.log(
+      '[Server] Routes: /controller /mobile /mobile/beacon /config /admin ' +
+        '/dashboard/api /health /health-detail (+ SPA at /)'
+    );
+    console.log(`[Server] Dashboard SPA served from ${WEB_DIST}`);
   });
 
   healthInterval = setInterval(async () => {
