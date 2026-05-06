@@ -5,6 +5,13 @@
  *   stream:fw2mobile:{controllerId}   firmware writes (heartbeat/status), mobile reads
  *   stream:mobile2fw:{controllerId}   mobile writes (commands),       firmware reads
  *
+ * Plus a global firehose:
+ *   stream:global:recent              every XADD to a per-controller stream
+ *                                     also writes a small metadata record
+ *                                     here so the dashboard can show the
+ *                                     last N messages across all controllers
+ *                                     in O(1) without scanning. MAXLEN ~ 200.
+ *
  * Delivery:
  *   - Mobile -> FW commands consumed via Redis consumer group "fw" with
  *     XREADGROUP COUNT 1 / XACK. This preserves at-most-once delivery
@@ -13,9 +20,9 @@
  *     with an 11-minute freshness window applied based on the entry's
  *     stream id timestamp.
  *
- * Retention: MAXLEN ~ STREAM_MAXLEN on every XADD. ACK state never trims
- * stream history; the dashboard reads via XRANGE/XREVRANGE independent
- * of the consumer group.
+ * Retention: MAXLEN ~ STREAM_MAXLEN on every per-controller XADD. ACK state
+ * never trims stream history; the dashboard reads via XRANGE/XREVRANGE
+ * independent of the consumer group.
  */
 
 import { Redis } from 'ioredis';
@@ -23,8 +30,20 @@ import { IMessageBroker, Message, QueueStats } from './types';
 
 const FRESHNESS_WINDOW_MS = 11 * 60 * 1000;
 const FW_GROUP = 'fw';
+const FIREHOSE_KEY = 'stream:global:recent';
+const FIREHOSE_MAXLEN = 200;
 
 type Direction = 'fw2mobile' | 'mobile2fw';
+
+export interface FirehoseEntry {
+  firehoseId: string;       // ID in stream:global:recent
+  controllerId: number;
+  direction: Direction;
+  streamId: string;          // ID in the per-controller stream
+  timestamp: string;         // ISO 8601
+  senderType: 'mobile' | 'controller';
+  authId?: string;
+}
 
 function streamKey(direction: Direction, controllerId: number): string {
   return `stream:${direction}:${controllerId}`;
@@ -91,12 +110,40 @@ export class RedisStreamQueue implements IMessageBroker {
     this.groupsEnsured.add(cacheKey);
   }
 
+  /**
+   * Best-effort write to the global firehose. Failures are logged but never
+   * propagate -- losing a firehose entry doesn't block message delivery.
+   */
+  private async writeFirehose(
+    direction: Direction,
+    controllerId: number,
+    streamId: string,
+    message: Message
+  ): Promise<void> {
+    try {
+      const fields = [
+        'controllerId', String(controllerId),
+        'direction', direction,
+        'streamId', streamId,
+        'timestamp', message.timestamp,
+        'senderType', message.sender.type,
+      ];
+      if (message.sender.authId) {
+        fields.push('authId', message.sender.authId);
+      }
+      await this.redis.xadd(FIREHOSE_KEY, 'MAXLEN', '~', FIREHOSE_MAXLEN, '*', ...fields);
+    } catch (err: any) {
+      console.warn(`[RedisBroker] Firehose write failed (non-fatal): ${err.message}`);
+    }
+  }
+
   async addMobileAppMessage(controllerId: number, message: Message): Promise<void> {
     const stream = streamKey('mobile2fw', controllerId);
     await this.ensureConsumerGroup(stream, FW_GROUP);
     const fields = this.serialize(message);
     const id = await this.redis.xadd(stream, 'MAXLEN', '~', this.maxLen, '*', ...fields);
     console.log(`[RedisBroker] XADD ${stream} -> ${id} (controller ${controllerId})`);
+    await this.writeFirehose('mobile2fw', controllerId, id || '', message);
   }
 
   async addControllerMessage(controllerId: number, message: Message): Promise<void> {
@@ -104,6 +151,7 @@ export class RedisStreamQueue implements IMessageBroker {
     const fields = this.serialize(message);
     const id = await this.redis.xadd(stream, 'MAXLEN', '~', this.maxLen, '*', ...fields);
     console.log(`[RedisBroker] XADD ${stream} -> ${id} (controller ${controllerId})`);
+    await this.writeFirehose('fw2mobile', controllerId, id || '', message);
   }
 
   async getMobileAppMessage(controllerId: number): Promise<Message | null> {
@@ -175,6 +223,29 @@ export class RedisStreamQueue implements IMessageBroker {
     const stream = streamKey(direction, controllerId);
     const entries = await this.redis.xrevrange(stream, '+', '-', 'COUNT', count);
     return entries.map(([id, fields]: [string, string[]]) => this.deserialize(stream, id, fields));
+  }
+
+  /**
+   * Read the most recent N entries from the global firehose, newest first.
+   * Used by the dashboard to show "last 100 messages across all devices".
+   */
+  async readFirehose(count: number): Promise<FirehoseEntry[]> {
+    const entries = await this.redis.xrevrange(FIREHOSE_KEY, '+', '-', 'COUNT', count);
+    return entries.map(([id, fields]: [string, string[]]) => {
+      const obj: Record<string, string> = {};
+      for (let i = 0; i < fields.length; i += 2) {
+        obj[fields[i]] = fields[i + 1];
+      }
+      return {
+        firehoseId: id,
+        controllerId: parseInt(obj.controllerId, 10),
+        direction: obj.direction as Direction,
+        streamId: obj.streamId,
+        timestamp: obj.timestamp,
+        senderType: obj.senderType as 'mobile' | 'controller',
+        ...(obj.authId ? { authId: obj.authId } : {}),
+      };
+    });
   }
 
   async getStats(): Promise<QueueStats> {

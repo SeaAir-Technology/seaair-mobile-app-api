@@ -14,6 +14,10 @@ import controllerRoutes from './src/routes/controller';
 import mobileRoutes from './src/routes/mobile';
 import configRoutes from './src/routes/config';
 import adminRoutes from './src/routes/admin';
+import beaconRoutes from './src/routes/beacon';
+import dashboardRoutes from './src/routes/dashboard';
+import { requireDashboardAdmin } from './src/middleware/requireDashboardAdmin';
+import { initProtoDecoder } from './src/services/protoDecoder';
 import { isCognitoConfigured, COGNITO_USER_POOL_ID, AWS_REGION } from './src/auth';
 import { HealthDetailResponse, QueueContents, IMessageBroker } from './src/types';
 
@@ -29,8 +33,14 @@ app.use(morgan('combined'));
 // we are fine. App Runner waits for /health to pass before routing traffic.
 app.use('/controller', controllerRoutes);
 app.use('/mobile', mobileRoutes);
+app.use('/mobile/beacon', beaconRoutes);
 app.use('/config', configRoutes);
 app.use('/admin', adminRoutes);
+
+// Dashboard backend: gated by Cognito JWT + dashboard-admin group membership.
+// Served on the same App Runner service (reachable via api.seaair.com or
+// dashboard.seaair.com — App Runner doesn't host-discriminate by default).
+app.use('/dashboard/api', requireDashboardAdmin, dashboardRoutes);
 
 app.get('/health', async (_req: Request, res: Response): Promise<void> => {
   const broker = app.locals.messageBroker as IMessageBroker | undefined;
@@ -111,6 +121,10 @@ async function start(): Promise<void> {
   console.log('[Server] Starting SeaAir Mobile App API...');
   console.log(`[Server] MESSAGE_BROKER=${getBrokerType()}`);
 
+  // Load proto definitions up front so the dashboard's payload-decoding path
+  // doesn't pay a cold-start cost on the first request.
+  initProtoDecoder();
+
   app.locals.rateLimiter = new RateLimiter();
   app.locals.messageBroker = await createMessageBroker();
   console.log(`[Server] Broker initialized: ${getBrokerType()}`);
@@ -123,7 +137,7 @@ async function start(): Promise<void> {
 
   app.listen(PORT, () => {
     console.log(`[Server] Listening on port ${PORT}`);
-    console.log('[Server] Routes: /controller /mobile /config /admin /health /health-detail');
+    console.log('[Server] Routes: /controller /mobile /mobile/beacon /config /admin /dashboard/api /health /health-detail');
   });
 
   healthInterval = setInterval(async () => {
