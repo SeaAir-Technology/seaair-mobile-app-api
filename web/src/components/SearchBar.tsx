@@ -1,30 +1,39 @@
-import { useState, FormEvent } from 'react';
+import { FormEvent } from 'react';
 import type { PayloadFilter } from '../lib/types';
 
 interface Props {
   controllerId: number | null;
   onControllerIdChange: (id: number | null) => void;
+  // Live text in the controller-identifier input. Lifted to the parent so
+  // the device list can filter as the user types, while submit (Enter or
+  // the Search button) still navigates straight to the typed controller.
+  searchText: string;
+  onSearchTextChange: (text: string) => void;
   filters: PayloadFilter[];
   onFiltersChange: (filters: PayloadFilter[]) => void;
+  filterText: string;
+  onFilterTextChange: (text: string) => void;
 }
 
 // Search bar with two affordances:
-//   1. Controller-ID lookup (the primary use case per the spec)
+//   1. Controller-identifier lookup that doubles as a live filter on the
+//      device list (the primary use case per the spec).
 //   2. Stacked decoded-payload filters using the same `path[=op]:value`
 //      grammar as the backend's parseFilterParam, so what you type here
-//      maps 1:1 to backend filtering.
+//      maps 1:1 to backend filtering on the per-device history view.
 export function SearchBar({
   controllerId,
   onControllerIdChange,
+  searchText,
+  onSearchTextChange,
   filters,
   onFiltersChange,
+  filterText,
+  onFilterTextChange,
 }: Props): JSX.Element {
-  const [idText, setIdText] = useState(controllerId?.toString() ?? '');
-  const [filterText, setFilterText] = useState('');
-
   function submit(e: FormEvent<HTMLFormElement>): void {
     e.preventDefault();
-    const parsed = parseInt(idText, 10);
+    const parsed = parseInt(searchText, 10);
     onControllerIdChange(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
   }
 
@@ -32,7 +41,7 @@ export function SearchBar({
     const f = parseFilterText(filterText);
     if (!f) return;
     onFiltersChange([...filters, f]);
-    setFilterText('');
+    onFilterTextChange('');
   }
 
   function removeFilter(idx: number): void {
@@ -42,26 +51,29 @@ export function SearchBar({
   return (
     <div className="border-b border-ink-200 bg-white px-4 py-3 space-y-2">
       <form onSubmit={submit} className="flex items-center gap-2">
-        <label className="text-sm text-ink-600">Controller</label>
+        <label className="text-sm text-ink-600" htmlFor="controller-search">
+          Controller
+        </label>
         <input
-          type="number"
+          id="controller-search"
+          type="text"
           inputMode="numeric"
-          placeholder="e.g. 1042"
-          value={idText}
-          onChange={(e) => setIdText(e.target.value)}
-          className="flex-1 max-w-[200px] px-3 py-1.5 border border-ink-200 rounded text-sm font-mono"
+          placeholder="Search by controller identifier (e.g. 1042)"
+          value={searchText}
+          onChange={(e) => onSearchTextChange(e.target.value)}
+          className="flex-1 max-w-[320px] px-3 py-1.5 border border-ink-200 rounded text-sm font-mono"
         />
         <button
           type="submit"
           className="px-3 py-1.5 bg-ink-800 text-white rounded text-sm"
         >
-          Search
+          Open controller
         </button>
-        {controllerId && (
+        {(controllerId || searchText) && (
           <button
             type="button"
             onClick={() => {
-              setIdText('');
+              onSearchTextChange('');
               onControllerIdChange(null);
             }}
             className="text-sm text-ink-500 hover:text-ink-900"
@@ -73,9 +85,9 @@ export function SearchBar({
       <div className="flex items-center gap-2 flex-wrap">
         <input
           type="text"
-          placeholder="filter: hvac.mode=cool  or  hvac.temperature=gt:70"
+          placeholder="Payload filter: hvac.mode=cool  or  hvac.temperature=gt:70"
           value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
+          onChange={(e) => onFilterTextChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -88,7 +100,7 @@ export function SearchBar({
           onClick={addFilter}
           className="px-2.5 py-1 border border-ink-300 text-ink-700 rounded text-xs"
         >
-          + Add filter
+          Add filter
         </button>
         {filters.map((f, i) => (
           <span
@@ -101,7 +113,7 @@ export function SearchBar({
               className="text-ink-500 hover:text-ink-900"
               aria-label="Remove filter"
             >
-              ×
+              \u00d7
             </button>
           </span>
         ))}

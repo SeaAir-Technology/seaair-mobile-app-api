@@ -50,6 +50,20 @@ export interface FirehoseResponse {
   entries: FirehoseEntry[];
 }
 
+export interface DeviceSummary {
+  controllerId: number;
+  lastSeenAt: string; // ISO 8601
+  ageMs: number;
+  alive: boolean;
+  beacon: boolean;
+}
+
+export interface DeviceListResponse {
+  windowMs: number;
+  count: number;
+  devices: DeviceSummary[];
+}
+
 export interface DeviceStateResponse {
   controllerId: number;
   alive: boolean;

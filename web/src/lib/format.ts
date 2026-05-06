@@ -1,15 +1,23 @@
+// User-facing formatters. Per the dashboard style rule, these spell out time
+// units in full ("5 minutes ago", not "5m ago") so labels read naturally and
+// stay accessible to anyone who isn't already steeped in the codebase.
+
+function pluralize(value: number, unit: string): string {
+  return `${value} ${value === 1 ? unit : `${unit}s`}`;
+}
+
 export function formatRelativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms)) return '—';
+  if (Number.isNaN(ms)) return '\u2014';
   if (ms < 1000) return 'just now';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${pluralize(seconds, 'second')} ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${pluralize(minutes, 'minute')} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${pluralize(hours, 'hour')} ago`;
+  const days = Math.floor(hours / 24);
+  return `${pluralize(days, 'day')} ago`;
 }
 
 export function formatTimestamp(iso: string): string {
@@ -26,11 +34,12 @@ export function formatTimestamp(iso: string): string {
 }
 
 export function formatWindow(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return pluralize(seconds, 'second');
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return pluralize(minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return pluralize(hours, 'hour');
+  const days = Math.floor(hours / 24);
+  return pluralize(days, 'day');
 }
