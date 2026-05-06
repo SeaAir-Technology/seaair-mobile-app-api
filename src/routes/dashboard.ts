@@ -19,6 +19,7 @@
 import express, { Request, Response } from 'express';
 import { RedisStreamQueue, FirehoseEntry } from '../redisStreamQueue';
 import { Message, IMessageBroker } from '../types';
+import { getBrokerType } from '../messageBroker';
 import {
   decodePayload,
   parseFilterParam,
@@ -48,7 +49,7 @@ function getRedisBroker(req: Request): RedisStreamQueue | null {
   if (!broker) return null;
   // The dashboard requires Redis Streams; the in-memory MessageQueue can't
   // satisfy it. Routes return 503 cleanly if the broker isn't a Redis one.
-  if (broker.getStatus().type !== 'redis') return null;
+  if (getBrokerType() !== 'redis') return null;
   return broker as unknown as RedisStreamQueue;
 }
 
