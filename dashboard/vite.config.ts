@@ -1,27 +1,25 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// SPA is served at /dashboard by Express in production. base must match
-// so all asset URLs in index.html resolve correctly.
+// Base path is /dashboard/ because the SPA is served behind that prefix
+// by the Express app (server.ts mounts express.static at /dashboard).
+// Vite emits asset URLs as /dashboard/assets/... which matches the static
+// mount, so no rewriting is needed.
 export default defineConfig({
   plugins: [react()],
   base: '/dashboard/',
   build: {
     outDir: 'dist',
-    sourcemap: false,
-    target: 'es2020',
+    emptyOutDir: true,
+    sourcemap: true,
   },
   server: {
     port: 5173,
-    // For local dev: proxy /dashboard/api requests to the live App Runner
-    // service so you can develop the SPA against real backend data without
-    // running the API locally. Override DEV_API_TARGET if you spin up the
-    // API on localhost.
     proxy: {
+      // Local dev: proxy backend calls to a running API on :3000
       '/dashboard/api': {
-        target: process.env.DEV_API_TARGET || 'https://api.seaair.com',
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        secure: true,
       },
     },
   },
