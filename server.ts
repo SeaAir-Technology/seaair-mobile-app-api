@@ -7,6 +7,7 @@
 
 import express, { Request, Response, NextFunction, Application } from 'express';
 import morgan from 'morgan';
+import path from 'path';
 import { createMessageBroker, getBrokerType } from './src/messageBroker';
 import { closeRedisClient } from './src/redisClient';
 import { RateLimiter } from './src/rateLimiter';
@@ -38,9 +39,31 @@ app.use('/config', configRoutes);
 app.use('/admin', adminRoutes);
 
 // Dashboard backend: gated by Cognito JWT + dashboard-admin group membership.
-// Served on the same App Runner service (reachable via api.seaair.com or
-// dashboard.seaair.com — App Runner doesn't host-discriminate by default).
+// Served on the same App Runner service as /dashboard SPA below, so requests
+// from the SPA are same-origin and need no CORS configuration.
 app.use('/dashboard/api', requireDashboardAdmin, dashboardRoutes);
+
+// Dashboard SPA static assets. Mounted AFTER /dashboard/api so the API router
+// takes precedence on /dashboard/api/* requests; the static middleware only
+// sees requests that don't match a registered route. The Dockerfile copies
+// the Vite build output into web/dist; in local dev the directory may not
+// exist, in which case express.static gracefully no-ops and the SPA dev
+// server (Vite) handles things directly on :5173.
+const WEB_DIST = path.resolve(process.cwd(), 'web/dist');
+app.use('/dashboard', express.static(WEB_DIST));
+
+// SPA HTML fallback for client-side routing. With app.use('/dashboard', ...)
+// req.path is relative to the mount point, so a real request like
+// /dashboard/devices/1042 arrives here as '/devices/1042'. We skip /api/* so
+// 404s from the API don't get masked with index.html, and we only respond to
+// safe GET/HEAD requests.
+app.use('/dashboard', (req: Request, res: Response, next: NextFunction): void => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(WEB_DIST, 'index.html'), (err) => {
+    if (err) next();
+  });
+});
 
 app.get('/health', async (_req: Request, res: Response): Promise<void> => {
   const broker = app.locals.messageBroker as IMessageBroker | undefined;
@@ -137,7 +160,11 @@ async function start(): Promise<void> {
 
   app.listen(PORT, () => {
     console.log(`[Server] Listening on port ${PORT}`);
-    console.log('[Server] Routes: /controller /mobile /mobile/beacon /config /admin /dashboard/api /health /health-detail');
+    console.log(
+      '[Server] Routes: /controller /mobile /mobile/beacon /config /admin ' +
+        '/dashboard /dashboard/api /health /health-detail'
+    );
+    console.log(`[Server] Dashboard SPA served from ${WEB_DIST}`);
   });
 
   healthInterval = setInterval(async () => {
