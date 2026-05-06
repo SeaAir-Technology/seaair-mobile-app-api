@@ -2,15 +2,16 @@
 
 Internal browser-based dashboard for the SeaAir support team. Lives inside the
 mobile app API repo and is served by the same Express service on AWS App
-Runner at `/dashboard/`. The backend API for it is mounted at
-`/dashboard/api/*` (see `src/routes/dashboard.ts`).
+Runner. The SPA is reached at the root of `dashboard.seaair.com` (a custom
+domain alias on the same App Runner service as `api.seaair.com`); the backend
+API for it is mounted at `/dashboard/api/*` (see `src/routes/dashboard.ts`).
 
 Served same-origin with the API, so no CORS configuration is required.
 
 ## Stack
 
 - Vite + React 18 + TypeScript
-- React Router v6 (basename `/dashboard`)
+- React Router v6 at the host root
 - TanStack Query for fetching + 2 s polling on live views
 - react-oidc-context against Cognito Hosted UI (access token Bearer auth)
 - Tailwind CSS
@@ -25,11 +26,11 @@ npm run build && node dist/server.js   # listens on :3000
 
 # Terminal 2 - SPA
 cd web
-cp .env.example .env.local             # fill in VITE_COGNITO_CLIENT_ID and
+cp .env.example .env.local             # fill in VITE_COGNITO_CLIENT_ID;
                                         # set VITE_COGNITO_REDIRECT_URI to
-                                        # http://localhost:5173/dashboard/
+                                        # http://localhost:5173/
 npm install
-npm run dev                             # http://localhost:5173/dashboard/
+npm run dev                             # http://localhost:5173/
 ```
 
 The Vite dev server proxies `/dashboard/api/*` to `localhost:3000`. Register
@@ -40,33 +41,31 @@ clean.
 
 The top-level `Dockerfile` adds a `web-builder` stage that runs `npm run build`
 here and copies `web/dist/` into the runtime image. The API then serves it at
-`/dashboard/`. One image, one deploy artifact.
+the host root. One image, one deploy artifact.
 
 Build-time env vars must be passed as Docker build args:
 
 ```bash
 docker build \
-  --build-arg VITE_COGNITO_AUTHORITY=... \
-  --build-arg VITE_COGNITO_CLIENT_ID=... \
-  --build-arg VITE_COGNITO_DOMAIN=... \
-  --build-arg VITE_COGNITO_REDIRECT_URI=... \
-  --build-arg VITE_COGNITO_LOGOUT_URI=... \
+  --build-arg VITE_COGNITO_AUTHORITY=https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Z6wNcT7sN \
+  --build-arg VITE_COGNITO_CLIENT_ID=<spa client id> \
+  --build-arg VITE_COGNITO_DOMAIN=us-east-2z6wnct7sn.auth.us-east-2.amazoncognito.com \
+  --build-arg VITE_COGNITO_REDIRECT_URI=https://dashboard.seaair.com/ \
+  --build-arg VITE_COGNITO_LOGOUT_URI=https://dashboard.seaair.com/ \
   -t seaair-mobile-app-api:dashboard .
 ```
 
-## Cognito setup checklist (one-time)
+## Cognito setup
 
-1. Create a Hosted UI domain on the Cognito user pool.
-2. Create a NEW app client for the dashboard with NO client secret.
-3. Allowed OAuth flows: Authorization code grant.
-4. Allowed scopes: `openid email profile`.
-5. Allowed callback URLs: `https://api.seaair.com/dashboard/` (and the dev
-   localhost URL if you'll use this client for dev too).
-6. Allowed sign-out URLs: same as callback URLs.
-7. Create a Cognito group named `dashboard-admin` (overridable via
-   `DASHBOARD_ADMIN_GROUP` on the API).
-8. Add the first admin user(s) to the group manually so they can use
-   `/dashboard/api/admin/users/:username/grant` to onboard others.
+Handled by the AWS CLI command in PR #15's body — creates a public app client
+in user pool `us-east-2_Z6wNcT7sN` with the dashboard.seaair.com callback,
+authorization code grant, scopes `openid email profile`. Output the
+`ClientId` from that command into `VITE_COGNITO_CLIENT_ID`.
+
+The `dashboard-admin` Cognito group must exist (overridable via
+`DASHBOARD_ADMIN_GROUP` on the API). At least one bootstrap member must be
+added via the AWS console so they can grant access to others through the
+Admin tab.
 
 ## Authorization model
 
