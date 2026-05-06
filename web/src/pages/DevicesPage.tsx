@@ -3,15 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useDeviceList } from '../hooks/useDeviceList';
 import { SearchBar } from '../components/SearchBar';
 import { Spinner } from '../components/Spinner';
-import { formatRelativeTime, formatTimestamp } from '../lib/format';
+import { formatRelativeTime, formatTimestamp, formatWindow } from '../lib/format';
 import type { DeviceSummary, PayloadFilter } from '../lib/types';
 import { DeviceDetail } from './DeviceDetail';
 
 const PAGE_SIZE = 50;
-const WINDOW_HOURS = 24;
+const WINDOW = '1m';
 
 // Two-column layout: rolled-up device list on the left (one row per
-// controller seen in the last 24 hours, beacon-active devices floated to
+// controller seen in the active window, beacon-active devices floated to
 // the top, paginated client-side, filtered live by the controller-identifier
 // search field), selected-device detail on the right. URL is the source of
 // truth for the selected controller, so beacon click-throughs (which navigate
@@ -78,7 +78,7 @@ function DeviceListColumn({
   onPageChange: (p: number) => void;
   onSelect: (id: number) => void;
 }): JSX.Element {
-  const { data, isLoading, error, isFetching } = useDeviceList(WINDOW_HOURS);
+  const { data, isLoading, error, isFetching } = useDeviceList(WINDOW);
 
   const filteredDevices = useMemo(() => {
     if (!data) return [];
@@ -95,12 +95,13 @@ function DeviceListColumn({
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE
   );
+  const windowLabel = data ? formatWindow(data.windowMs) : '…';
 
   return (
     <div className="overflow-y-auto flex flex-col">
       <div className="px-4 py-2 text-xs text-ink-500 flex items-center justify-between border-b border-ink-200 sticky top-0 bg-white z-10">
         <span>
-          Devices active in the last 24 hours
+          Devices active in the last {windowLabel}
           {data &&
             ` (showing ${filteredDevices.length}${
               filteredDevices.length !== data.devices.length
@@ -134,7 +135,7 @@ function DeviceListColumn({
             <li className="p-4 text-ink-500 text-sm">
               {searchText.trim()
                 ? `No devices match "${searchText}".`
-                : 'No devices have reported in the last 24 hours.'}
+                : `No devices have reported in the last ${windowLabel}.`}
             </li>
           )}
         </ul>
@@ -187,7 +188,7 @@ function DeviceRow({
           {device.beacon && (
             <span
               className="inline-flex items-center bg-amber-100 text-amber-800 border border-amber-300 rounded px-1.5 py-0.5 text-[10px] font-medium"
-              title="A beacon has been raised on this device in the last 24 hours"
+              title="Firmware has raised a beacon flag in its latest heartbeat"
             >
               Beacon raised
             </span>

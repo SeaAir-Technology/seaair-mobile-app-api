@@ -81,6 +81,31 @@ function enrich(msg: Message): EnrichedMessage {
   return { ...msg, decoded: decodePayload(msg.protobufPayload) };
 }
 
+/**
+ * True when the firmware has signaled a beacon in its latest heartbeat.
+ *
+ * Reads `beacon === true` either at the root of the decoded protobuf or
+ * one level down inside any sub-message. Walking one level deep gives the
+ * firmware some flexibility on placement (root, status sub-message, etc.)
+ * without doing an unbounded recursive search that could match unrelated
+ * fields named "beacon".
+ */
+function isPayloadBeaconRaised(decoded: DecodedPayload | null): boolean {
+  if (!decoded) return false;
+  const root = decoded.data as Record<string, unknown>;
+  if (root.beacon === true) return true;
+  for (const value of Object.values(root)) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      (value as Record<string, unknown>).beacon === true
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---- /me --------------------------------------------------------------------
 
 router.get('/me', async (req: Request, res: Response): Promise<void> => {
@@ -97,15 +122,19 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
   });
 });
 
-// ---- Devices: rolled-up list for the past N hours --------------------------
+// ---- Devices: rolled-up list for the past N seconds/minutes ----------------
 //
 // One row per controller that has at least one heartbeat (firmware-to-mobile
-// stream entry) within the lookback window. Each row carries last-seen
-// timestamp + age + an `alive` flag (using the standard 11-minute freshness
-// window) + a `beacon` boolean set when at least one beacon has been raised
-// against the controller within the same window. The list is sorted with
-// beacon-active devices first, then most-recently-seen first; the SPA can
-// re-sort on the client but server-side sort matches the expected default.
+// stream entry) within the lookback window. Default window is 1 minute,
+// matching the heartbeat cadence: that keeps the per-request scan bounded
+// (only currently-online controllers come back) while still giving the UI a
+// complete picture of the active fleet.
+//
+// Each row carries last-seen timestamp + age + an `alive` flag (using the
+// standard 11-minute freshness window) + a `beacon` boolean read from the
+// firmware's own decoded protobuf payload (`beacon === true` at root or one
+// level down in a sub-message). Sorted with beacon-active devices first,
+// then most-recently-seen first.
 
 router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -113,20 +142,23 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
     brokerError(res);
     return;
   }
-  const windowMs = parseWindow((req.query.window as string) || '24h');
+  const windowMs = parseWindow((req.query.window as string) || '1m');
   const cutoff = Date.now() - windowMs;
 
   try {
-    // 1. Distinct controllerIds with heartbeats in the window. SCAN keys for
-    //    firmware-to-mobile streams, then read each stream's latest entry
-    //    in parallel. Older entries can't move a device into the window if
-    //    the latest entry is already out of window, so XREVRANGE COUNT 1 is
-    //    enough.
+    // Distinct controllerIds with heartbeats in the window. SCAN keys for
+    // firmware-to-mobile streams, then read each stream's latest entry in
+    // parallel. Older entries can't move a device into the window if the
+    // latest entry is already out of window, so XREVRANGE COUNT 1 is
+    // enough.
     const streamKeys = await broker.listStreamKeys();
-    const fw2mobileKeys = streamKeys.filter((k) => k.startsWith('stream:fw2mobile:'));
+    const fw2mobileKeys = streamKeys.filter((k) =>
+      k.startsWith('stream:fw2mobile:')
+    );
 
+    type Lookup = { controllerId: number; lastSeenMs: number; beacon: boolean };
     const lookups = await Promise.all(
-      fw2mobileKeys.map(async (key): Promise<readonly [number, number] | null> => {
+      fw2mobileKeys.map(async (key): Promise<Lookup | null> => {
         const idStr = key.split(':')[2];
         const controllerId = parseInt(idStr, 10);
         if (!Number.isFinite(controllerId) || controllerId <= 0) return null;
@@ -135,52 +167,23 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
         const msg = history[0];
         const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
         if (tsMs < cutoff) return null;
-        return [controllerId, tsMs] as const;
+        const decoded = decodePayload(msg.protobufPayload);
+        const beacon = isPayloadBeaconRaised(decoded);
+        return { controllerId, lastSeenMs: tsMs, beacon };
       })
     );
-    const controllerLatest = new Map<number, number>(
-      lookups.filter((x): x is readonly [number, number] => x !== null)
-    );
 
-    // 2. Beacons raised in the same window. Pull the most-recent beacons
-    //    page-by-page; rows come back newest-first, so we can stop as soon
-    //    as we cross the cutoff. Cap at 500 scanned to keep a runaway from
-    //    eating the request budget.
-    const beaconControllers = new Set<number>();
-    const MAX_BEACONS_TO_SCAN = 500;
-    let cursor: string | undefined;
-    let scanned = 0;
-    let stop = false;
-    while (!stop && scanned < MAX_BEACONS_TO_SCAN) {
-      const result = await listBeacons(100, cursor);
-      if (result.beacons.length === 0) break;
-      for (const b of result.beacons) {
-        scanned++;
-        const tsMs = new Date(b.createdAt).getTime();
-        if (Number.isNaN(tsMs) || tsMs < cutoff) {
-          stop = true;
-          break;
-        }
-        beaconControllers.add(b.controllerId);
-      }
-      if (!result.nextCursor) break;
-      cursor = result.nextCursor;
-    }
-
-    // 3. Build payload. Sort beacon-active devices first, then by recency.
     const now = Date.now();
-    const devices = Array.from(controllerLatest.entries()).map(
-      ([controllerId, lastSeenMs]) => {
-        const ageMs = now - lastSeenMs;
-        return {
-          controllerId,
-          lastSeenAt: new Date(lastSeenMs).toISOString(),
-          ageMs,
-          alive: ageMs <= FRESHNESS_MS,
-          beacon: beaconControllers.has(controllerId),
-        };
-      }
-    );
+    const devices = lookups
+      .filter((x): x is Lookup => x !== null)
+      .map(({ controllerId, lastSeenMs, beacon }) => ({
+        controllerId,
+        lastSeenAt: new Date(lastSeenMs).toISOString(),
+        ageMs: now - lastSeenMs,
+        alive: now - lastSeenMs <= FRESHNESS_MS,
+        beacon,
+      }));
+
     devices.sort((a, b) => {
       if (a.beacon !== b.beacon) return a.beacon ? -1 : 1;
       return a.ageMs - b.ageMs;
@@ -197,10 +200,10 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// ---- Devices: live recent across all controllers (legacy firehose) --------
+// ---- Devices: live recent across all controllers (firehose) ----------------
 //
-// Retained for callers that want the raw cross-controller event stream.
-// The default Devices view uses /devices instead.
+// Used by the History page to show the cross-controller event stream. Same
+// data the /devices roll-up is built on top of, just unrolled and unjoined.
 
 router.get('/messages/recent', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);

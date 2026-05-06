@@ -32,6 +32,9 @@ export function Layout(): JSX.Element {
           <NavLink to="/devices" className={navClass}>
             Devices
           </NavLink>
+          <NavLink to="/history" className={navClass}>
+            History
+          </NavLink>
           <NavLink to="/beacons" className={navClass}>
             Beacons
           </NavLink>
