@@ -1,7 +1,7 @@
 name: Build and Deploy to App Runner
 on:
   push:
-    branches: [feature/redis-streams-broker]
+    branches: [main]
     paths-ignore: ['**.md', '.gitignore', 'docs/**']
   workflow_dispatch:
 permissions:
