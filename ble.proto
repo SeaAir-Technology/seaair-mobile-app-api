@@ -34,6 +34,16 @@ message Msg {
         DispPairRequest        dispPairRequest        = 28;
         DispPairResponse       dispPairResponse       = 29;
 
+        // Access Control
+        PairingPinValidateRequest   pairingPinValidateRequest   = 30;
+        PairingPinValidateResponse  pairingPinValidateResponse  = 31;
+        PairingPinChangeRequest     pairingPinChangeRequest     = 32;
+        PairingPinChangeResponse    pairingPinChangeResponse    = 33;
+        AdminPinValidateRequest     adminPinValidateRequest     = 34;
+        AdminPinValidateResponse    adminPinValidateResponse    = 35;
+        AdminPinChangeRequest       adminPinChangeRequest       = 36;
+        AdminPinChangeResponse      adminPinChangeResponse      = 37;
+
         // Test
         TestDataRepsonse testDataRepsonse = 254;
         TestDataRequest testDataRequest   = 255;
@@ -290,5 +300,62 @@ message DispPairResponse {
         ERROR_REQUESTED       = 1;  // Error pair has requested
         ERROR_MAC_INVALID     = 2;  // Error MAC address invalid
         ERROR_CONFIRM_TIMEOUT = 3;  // Error use confirm timeout
+    }
+}
+
+// Access Control - Pairing PIN
+message PairingPinValidateRequest {
+    string pin = 1;
+}
+message PairingPinValidateResponse {
+    Result result       = 1;
+    uint32 lockout_secs = 2; // Seconds until next attempt allowed (0 if not locked)
+    enum Result {
+        SUCCESS       = 0;
+        ERROR_INVALID = 1; // PIN incorrect
+        ERROR_LOCKED  = 2; // Too many attempts, try again after lockout_secs
+    }
+}
+
+message PairingPinChangeRequest {
+    string current_pin = 1;
+    string new_pin     = 2; // Empty = reset to "000000"
+}
+message PairingPinChangeResponse {
+    Result result       = 1;
+    uint32 lockout_secs = 2;
+    enum Result {
+        SUCCESS       = 0;
+        ERROR_INVALID = 1; // Current PIN incorrect
+        ERROR_LOCKED  = 2;
+    }
+}
+
+// Access Control - Admin PIN
+message AdminPinValidateRequest {
+    string pin = 1;
+}
+message AdminPinValidateResponse {
+    Result result       = 1;
+    uint32 lockout_secs = 2;
+    enum Result {
+        SUCCESS       = 0;
+        ERROR_INVALID = 1; // PIN incorrect
+        ERROR_LOCKED  = 2;
+        ERROR_NOT_SET = 3; // Admin PIN not configured
+    }
+}
+
+message AdminPinChangeRequest {
+    string current_pin = 1; // Empty if admin PIN is not currently set
+    string new_pin     = 2; // Empty = remove admin PIN
+}
+message AdminPinChangeResponse {
+    Result result       = 1;
+    uint32 lockout_secs = 2;
+    enum Result {
+        SUCCESS       = 0;
+        ERROR_INVALID = 1; // Current PIN incorrect
+        ERROR_LOCKED  = 2;
     }
 }

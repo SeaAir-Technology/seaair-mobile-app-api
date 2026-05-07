@@ -36,10 +36,18 @@ enum Mode {
     FAN      = 4;
 }
 
+enum BudgetResetStrategy {
+    BUDGET_RESET_ON_RESTART = 0; // Default: reset counter on mode->standby (current behavior)
+    BUDGET_RESET_HOURS_12   = 1; // Auto-reset counter every 12 hours of accumulated uptime
+    BUDGET_RESET_HOURS_24   = 2; // Auto-reset counter every 24 hours of accumulated uptime
+    BUDGET_RESET_MINUTES_5  = 3; // TEST-ONLY: 5-minute window for verification
+}
+
 message Budget {
-    bool   enabled  = 1; // Activate status
-    uint32 limit    = 2; // Limit power
-    uint32 duration = 3; // Duration time
+    bool                         enabled        = 1; // Activate status
+    uint32                       limit          = 2; // Limit power
+    uint32                       duration       = 3; // Duration time (unused)
+    optional BudgetResetStrategy reset_strategy = 4; // Controls when powerTotal resets
 }
 
 message Fan {
@@ -58,12 +66,17 @@ message Compressor {
 }
 
 message Hvac {
-    HvacConfig config     = 1;
-    uint32     temperture = 2; // F
-    uint32     humidity   = 3; // %s
-    uint32     voltage    = 4; // mV
-    float      powerRate  = 5;
-    float      powerTotal = 6;
+    HvacConfig      config               = 1;
+    uint32          temperture           = 2; // F
+    uint32          humidity             = 3; // %s
+    uint32          voltage              = 4; // mV
+    float           powerRate            = 5;
+    float           powerTotal           = 6;
+    optional uint64 controller_id        = 7;  // Unique controller board identifier from ESP eFuse MAC
+    optional bool   high_pressure        = 8;  // High pressure event detected (real-time)
+    optional bool   low_pressure         = 9;  // Low pressure event detected (real-time)
+    optional bool   admin_pin_set        = 10; // Whether admin PIN is configured on this controller
+    optional uint32 budget_seconds_since_reset = 11; // Seconds elapsed in current budget reset window (read-only)
 }
 
 message Controller2Hvac {
@@ -99,14 +112,15 @@ message WiFi {
 }
 
 message HvacConfig {
-    Budget          budget        = 1;
-    Fan             fan           = 2;
-    Mode            mode          = 3;
-    Compressor      compressor    = 4;
-    uint32          tempreature   = 5;
-    uint32          humidity      = 6;
-    optional string name          = 7;
-    optional uint64 controller_id = 8; // Unique controller board identifier from ESP eFuse MAC
+    Budget          budget               = 1;
+    Fan             fan                  = 2;
+    Mode            mode                 = 3;
+    Compressor      compressor           = 4;
+    uint32          tempreature          = 5;
+    uint32          humidity             = 6;
+    optional string name                 = 7;
+    optional bool   high_pressure_alarm  = 8; // Set to false to clear the latched high pressure alarm
+    optional bool   low_pressure_alarm   = 9; // Set to false to clear the latched low pressure alarm
 }
 
 message UtilityConfig {
