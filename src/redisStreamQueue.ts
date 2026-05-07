@@ -45,6 +45,15 @@ export interface FirehoseEntry {
   authId?: string;
 }
 
+export interface MarkAllReceivedResult {
+  controllerId: number;
+  direction: Direction;
+  pelAcked: number;          // pending-entries-list entries acknowledged
+  skipped: number;            // undelivered entries skipped past via SETID
+  cursorAdvancedTo: string;   // new last-delivered-id for the consumer group
+  streamLength: number;       // total stream length after the operation
+}
+
 function streamKey(direction: Direction, controllerId: number): string {
   return `stream:${direction}:${controllerId}`;
 }
@@ -191,6 +200,104 @@ export class RedisStreamQueue implements IMessageBroker {
       return null;
     }
     return msg;
+  }
+
+  /**
+   * Mark every currently-queued message for a controller as already received.
+   * Backs the dashboard's "Mark all received" button.
+   *
+   * Two things have to happen for a future XREADGROUP `>` call to come back
+   * empty:
+   *   1. Anything in the consumer group's pending-entries-list (PEL) gets
+   *      explicitly XACK'd. PEL entries don't reappear under `>` reads but
+   *      they stick around forever otherwise; cleaning them keeps Redis
+   *      memory tidy and matches the user expectation of "the queue is
+   *      empty after I clicked this".
+   *   2. The group's last-delivered-id gets advanced to `$` (the latest
+   *      entry). Any entries that were XADDed but never delivered to the
+   *      consumer group are now skipped — the firmware will never see them.
+   *
+   * Both operations are idempotent. Calling twice in a row is harmless.
+   * Direction defaults to mobile2fw because that's the only channel the
+   * firmware drains via consumer group; fw2mobile is supported as an
+   * argument for future symmetry but is effectively a no-op there.
+   */
+  async markAllReceived(
+    controllerId: number,
+    direction: Direction = 'mobile2fw'
+  ): Promise<MarkAllReceivedResult> {
+    const stream = streamKey(direction, controllerId);
+    await this.ensureConsumerGroup(stream, FW_GROUP);
+
+    // 1. Inspect the group cursor before we move it so we can report how
+    //    many undelivered entries we just skipped. XINFO GROUPS returns a
+    //    flat array of key/value pairs per group; we walk it to find ours.
+    const groupsRaw = (await this.redis.xinfo('GROUPS', stream)) as any[];
+    let lastDeliveredId = '0-0';
+    if (Array.isArray(groupsRaw)) {
+      for (const g of groupsRaw) {
+        if (!Array.isArray(g)) continue;
+        const obj: Record<string, any> = {};
+        for (let i = 0; i < g.length; i += 2) obj[g[i]] = g[i + 1];
+        if (obj.name === FW_GROUP) {
+          lastDeliveredId = String(obj['last-delivered-id'] || '0-0');
+          break;
+        }
+      }
+    }
+
+    // 2. Acknowledge anything sitting in the PEL. XPENDING summary returns
+    //    [count, smallestId, greatestId, [[consumer, count]]]; we then
+    //    enumerate ids via XPENDING <stream> <group> - + <count>.
+    const summary = (await this.redis.xpending(stream, FW_GROUP)) as any;
+    const pelCount = Array.isArray(summary) ? Number(summary[0]) : 0;
+    let pelAcked = 0;
+    if (pelCount > 0) {
+      const details = (await this.redis.xpending(
+        stream, FW_GROUP, '-', '+', pelCount
+      )) as any[];
+      if (Array.isArray(details) && details.length > 0) {
+        const ids = details.map((d) => d[0]);
+        pelAcked = (await this.redis.xack(stream, FW_GROUP, ...ids)) || 0;
+      }
+    }
+
+    // 3. Count entries strictly after the previous cursor; that's how
+    //    many undelivered messages we're about to skip. Range is
+    //    exclusive on the low end via the `(<id>` parenthesis syntax.
+    let skipped = 0;
+    try {
+      const skippedEntries = await this.redis.xrange(
+        stream, `(${lastDeliveredId}`, '+'
+      );
+      skipped = Array.isArray(skippedEntries) ? skippedEntries.length : 0;
+    } catch {
+      skipped = 0;
+    }
+
+    // 4. Advance the cursor. After this, XREADGROUP `>` returns nothing
+    //    until a fresh XADD lands.
+    await this.redis.xgroup('SETID', stream, FW_GROUP, '$');
+
+    // 5. Pull the new cursor + total stream length for reporting.
+    const latest = await this.redis.xrevrange(stream, '+', '-', 'COUNT', 1);
+    const cursorAdvancedTo =
+      latest && latest.length > 0 ? (latest[0] as any)[0] : '0-0';
+    const streamLength = await this.redis.xlen(stream);
+
+    console.log(
+      `[RedisBroker] markAllReceived ${stream} (controller ${controllerId}): ` +
+        `pelAcked=${pelAcked} skipped=${skipped} cursorAdvancedTo=${cursorAdvancedTo} streamLength=${streamLength}`
+    );
+
+    return {
+      controllerId,
+      direction,
+      pelAcked,
+      skipped,
+      cursorAdvancedTo,
+      streamLength,
+    };
   }
 
   async ping(): Promise<boolean> {

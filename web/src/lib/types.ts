@@ -52,7 +52,7 @@ export interface FirehoseResponse {
 
 export interface DeviceSummary {
   controllerId: number;
-  lastSeenAt: string; // ISO 8601
+  lastSeenAt: string;
   ageMs: number;
   alive: boolean;
   beacon: boolean;
@@ -106,6 +106,15 @@ export interface DeviceAnalyticsResponse {
   scanned: number;
   series: AnalyticsSeries;
   seriesNames: string[];
+}
+
+export interface MarkAllReceivedResponse {
+  controllerId: number;
+  direction: 'fw2mobile' | 'mobile2fw';
+  pelAcked: number;
+  skipped: number;
+  cursorAdvancedTo: string;
+  streamLength: number;
 }
 
 export interface Beacon {

@@ -123,18 +123,6 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
 });
 
 // ---- Devices: rolled-up list for the past N seconds/minutes ----------------
-//
-// One row per controller that has at least one heartbeat (firmware-to-mobile
-// stream entry) within the lookback window. Default window is 1 minute,
-// matching the heartbeat cadence: that keeps the per-request scan bounded
-// (only currently-online controllers come back) while still giving the UI a
-// complete picture of the active fleet.
-//
-// Each row carries last-seen timestamp + age + an `alive` flag (using the
-// standard 11-minute freshness window) + a `beacon` boolean read from the
-// firmware's own decoded protobuf payload (`beacon === true` at root or one
-// level down in a sub-message). Sorted with beacon-active devices first,
-// then most-recently-seen first.
 
 router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -146,11 +134,6 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   const cutoff = Date.now() - windowMs;
 
   try {
-    // Distinct controllerIds with heartbeats in the window. SCAN keys for
-    // firmware-to-mobile streams, then read each stream's latest entry in
-    // parallel. Older entries can't move a device into the window if the
-    // latest entry is already out of window, so XREVRANGE COUNT 1 is
-    // enough.
     const streamKeys = await broker.listStreamKeys();
     const fw2mobileKeys = streamKeys.filter((k) =>
       k.startsWith('stream:fw2mobile:')
@@ -201,9 +184,6 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
 });
 
 // ---- Devices: live recent across all controllers (firehose) ----------------
-//
-// Used by the History page to show the cross-controller event stream. Same
-// data the /devices roll-up is built on top of, just unrolled and unjoined.
 
 router.get('/messages/recent', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -283,8 +263,6 @@ router.get('/devices/:controllerId/history', async (req: Request, res: Response)
       buckets.push({ direction: 'mobile2fw', messages: m });
     }
 
-    // Merge newest-first across both directions, then optionally filter on
-    // decoded protobuf contents.
     const merged: Array<EnrichedMessage & { direction: 'fw2mobile' | 'mobile2fw' }> = [];
     for (const b of buckets) {
       for (const msg of b.messages) {
@@ -315,12 +293,49 @@ router.get('/devices/:controllerId/history', async (req: Request, res: Response)
   }
 });
 
-// ---- Devices: analytics (skeleton) -----------------------------------------
+// ---- Devices: "Mark all received" ------------------------------------------
 //
-// Returns numeric time-series for any decoded payload field discovered in
-// the requested window. The Devices > Analytics tab in the SPA picks which
-// series to chart. Specific known series (power, temp, runtime, cycle freq)
-// can be added once the proto field names are confirmed.
+// Advances the consumer-group cursor to skip any currently-queued mobile
+// commands so the firmware doesn't process them, and acks any entries
+// stuck in the consumer group's pending-entries-list. Backs the dashboard
+// button with the same name on the controller detail page.
+
+router.post('/devices/:controllerId/mark-all-received', async (req: Request, res: Response): Promise<void> => {
+  const broker = getRedisBroker(req);
+  if (!broker) {
+    brokerError(res);
+    return;
+  }
+  const controllerId = parseInt(req.params.controllerId, 10);
+  if (isNaN(controllerId) || controllerId <= 0) {
+    res.status(400).json({ error: 'controllerId must be a positive integer' });
+    return;
+  }
+  // Default to mobile2fw because that's the only channel the firmware
+  // drains via consumer group; fw2mobile is accepted for symmetry but is
+  // a no-op there (mobile reads via XREVRANGE without a group).
+  const directionParam = (req.query.direction as string) || 'mobile2fw';
+  if (directionParam !== 'mobile2fw' && directionParam !== 'fw2mobile') {
+    res.status(400).json({ error: 'direction must be mobile2fw or fw2mobile' });
+    return;
+  }
+  const direction = directionParam as 'mobile2fw' | 'fw2mobile';
+
+  try {
+    const result = await broker.markAllReceived(controllerId, direction);
+    const actor = req.auth?.email || req.auth?.username || req.auth?.sub;
+    console.log(
+      `[Dashboard] mark-all-received by ${actor} on controller ${controllerId} (${direction}): ` +
+        `pelAcked=${result.pelAcked} skipped=${result.skipped}`
+    );
+    res.json(result);
+  } catch (err: any) {
+    console.error(`[Dashboard] mark-all-received failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Devices: analytics (skeleton) -----------------------------------------
 
 router.get('/devices/:controllerId/analytics', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -354,7 +369,6 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
       });
     }
 
-    // Reverse each series so it's chronological (oldest -> newest).
     for (const k of Object.keys(series)) series[k].reverse();
 
     res.json({
@@ -482,7 +496,6 @@ router.post('/admin/users/:username/grant', async (req: Request, res: Response):
 });
 
 router.post('/admin/users/:username/revoke', async (req: Request, res: Response): Promise<void> => {
-  // Don't let an admin revoke themselves and lock everyone out by accident.
   const selfUsername = req.auth?.username || req.auth?.['cognito:username'] || req.auth?.sub;
   if (selfUsername && selfUsername === req.params.username) {
     res.status(400).json({ error: 'Cannot revoke your own dashboard access' });
