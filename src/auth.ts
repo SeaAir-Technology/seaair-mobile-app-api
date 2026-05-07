@@ -1,6 +1,10 @@
 /**
  * AWS Cognito JWT Authentication Middleware
- * Validates JWT tokens issued by AWS Cognito for mobile app routes
+ * Validates JWT tokens issued by AWS Cognito for mobile app and dashboard routes.
+ *
+ * COGNITO_CLIENT_ID accepts a single client id OR a comma-separated list,
+ * which lets one verifier accept tokens from multiple app clients in the
+ * same user pool (e.g. the mobile app client AND the dashboard SPA client).
  */
 
 import { Request, Response, NextFunction } from 'express';
@@ -20,6 +24,10 @@ declare global {
 // Create Cognito JWT verifier instance
 let verifier: ReturnType<typeof CognitoJwtVerifier.create> | null = null;
 
+function parseClientIds(raw: string): string[] {
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 /**
  * Initialize the Cognito JWT verifier
  * This is called lazily on first use to allow configuration at runtime
@@ -32,15 +40,24 @@ function initializeVerifier(): ReturnType<typeof CognitoJwtVerifier.create> {
   }
 
   if (!verifier) {
+    const ids = parseClientIds(cognitoConfig.clientId);
+    if (ids.length === 0) {
+      throw new Error('COGNITO_CLIENT_ID parsed to an empty client list');
+    }
+    // aws-jwt-verify accepts a string OR string[]; for the array form it
+    // accepts a token if its client_id claim matches any of the ids.
     verifier = CognitoJwtVerifier.create({
       userPoolId: cognitoConfig.userPoolId,
-      tokenUse: 'access', // or 'id' depending on which token type you want to verify
-      clientId: cognitoConfig.clientId,
+      tokenUse: 'access',
+      clientId: ids.length === 1 ? ids[0] : ids,
     });
-    
-    console.log(`[Auth] Cognito JWT verifier initialized for User Pool: ${cognitoConfig.userPoolId}, Region: ${cognitoConfig.region}`);
+
+    console.log(
+      `[Auth] Cognito JWT verifier initialized for User Pool: ${cognitoConfig.userPoolId}, ` +
+        `Region: ${cognitoConfig.region}, Clients: [${ids.join(', ')}]`
+    );
   }
-  
+
   return verifier;
 }
 

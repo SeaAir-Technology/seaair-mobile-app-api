@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.github
+.vscode
+.idea
+.env
+.env.*
+!.env.example
+npm-debug.log*
+*.md
+!REDIS_STREAMS.md
+test.js
+test.ts
+.DS_Store

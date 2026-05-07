@@ -1,193 +1,215 @@
 /**
  * SeaAir Mobile App API
- * Transport layer for mobile app and controller communication
+ * Transport layer for mobile app and controller communication.
+ *
+ * Uses MESSAGE_BROKER=memory|redis to select the broker implementation.
  */
 
 import express, { Request, Response, NextFunction, Application } from 'express';
 import morgan from 'morgan';
-import { MessageQueue } from './src/messageQueue';
+import path from 'path';
+import { createMessageBroker, getBrokerType } from './src/messageBroker';
+import { closeRedisClient } from './src/redisClient';
 import { RateLimiter } from './src/rateLimiter';
 import controllerRoutes from './src/routes/controller';
 import mobileRoutes from './src/routes/mobile';
 import configRoutes from './src/routes/config';
+import adminRoutes from './src/routes/admin';
+import beaconRoutes from './src/routes/beacon';
+import dashboardRoutes from './src/routes/dashboard';
+import { requireDashboardAdmin } from './src/middleware/requireDashboardAdmin';
+import { initProtoDecoder } from './src/services/protoDecoder';
 import { isCognitoConfigured, COGNITO_USER_POOL_ID, AWS_REGION } from './src/auth';
-import { HealthDetailResponse, QueueContents, Message } from './src/types';
+import { HealthDetailResponse, QueueContents, IMessageBroker } from './src/types';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(express.json());
-app.use(morgan('combined')); // Log all HTTP requests
+app.use(express.json({ limit: '256kb' }));
+app.use(morgan('combined'));
 
-// Initialize message queue and rate limiter
-app.locals.messageQueue = new MessageQueue();
-app.locals.rateLimiter = new RateLimiter();
-
-console.log('[Server] Message queue and rate limiter initialized');
-
-// Check AWS Cognito configuration
-if (isCognitoConfigured()) {
-  console.log(`[Server] AWS Cognito configured - User Pool: ${COGNITO_USER_POOL_ID}, Region: ${AWS_REGION}`);
-} else {
-  console.warn('[Server] WARNING: AWS Cognito not configured. Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID in the configuration.');
-  console.warn('[Server] Mobile app authentication will fail until Cognito is configured.');
-}
-
-// Routes
+// Routes are mounted before async startup so request handlers work as soon as
+// the server is listening; handlers read the broker off app.locals at request
+// time, so as long as start() has populated it before the first request lands,
+// we are fine. App Runner waits for /health to pass before routing traffic.
 app.use('/controller', controllerRoutes);
 app.use('/mobile', mobileRoutes);
+app.use('/mobile/beacon', beaconRoutes);
 app.use('/config', configRoutes);
+app.use('/admin', adminRoutes);
 
-// Health check endpoint
-app.get('/health', (_req: Request, res: Response): void => {
-  res.status(200).json({ status: 'healthy' });
+// Dashboard backend: gated by Cognito JWT + dashboard-admin group membership.
+// Same App Runner service as the SPA below, so requests from the SPA are
+// same-origin even when the SPA is reached via a different custom domain
+// (App Runner doesn't host-discriminate by default).
+app.use('/dashboard/api', requireDashboardAdmin, dashboardRoutes);
+
+// Dashboard SPA. Served at the host root so users on dashboard.seaair.com see
+// https://dashboard.seaair.com/ rather than /dashboard/. The static middleware
+// is mounted AFTER all API routers so the API still wins on its own paths;
+// static only sees requests that didn't match a registered route.
+const WEB_DIST = path.resolve(process.cwd(), 'web/dist');
+app.use(express.static(WEB_DIST));
+
+// SPA HTML fallback for client-side routing. Triggers on GETs that didn't
+// match any API router or static file. Two safety checks keep API 404s from
+// being masked with index.html:
+//   1. Explicit skip for /dashboard/api (the only API path a SPA dev would
+//      plausibly hit with an HTML-accepting client).
+//   2. Accept-header check: real browser navigations send 'text/html'; API
+//      clients send 'application/json' or '*/*' and fall through to 404.
+app.use((req: Request, res: Response, next: NextFunction): void => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (
+    req.path === '/dashboard/api' ||
+    req.path.startsWith('/dashboard/api/') ||
+    req.path === '/health' ||
+    req.path === '/health-detail'
+  ) {
+    return next();
+  }
+  const accept = req.headers.accept || '';
+  if (!accept.includes('text/html')) return next();
+  res.sendFile(path.join(WEB_DIST, 'index.html'), (err) => {
+    if (err) next();
+  });
 });
 
-// Detailed health check endpoint with queue contents
-app.get('/health-detail', (_req: Request, res: Response): void => {
-  const stats = app.locals.messageQueue.getStats();
-  const rateLimiterStats = app.locals.rateLimiter.getStats();
-  const queueData = app.locals.messageQueue.getAllQueueContents();
-  
-  // Convert Maps to plain objects for JSON serialization
-  const queueContents: QueueContents = {
-    mobileAppQueue: {},
-    controllerQueue: {}
+app.get('/health', async (_req: Request, res: Response): Promise<void> => {
+  const broker = app.locals.messageBroker as IMessageBroker | undefined;
+  let brokerOk = false;
+  if (broker) {
+    try {
+      brokerOk = await broker.ping();
+    } catch {
+      brokerOk = false;
+    }
+  }
+  const status = {
+    status: brokerOk ? 'healthy' : 'degraded',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    broker: {
+      type: getBrokerType(),
+      connected: brokerOk,
+    },
+    cognito: {
+      configured: isCognitoConfigured(),
+    },
   };
+  res.status(brokerOk ? 200 : 503).json(status);
+});
 
-  // Convert mobile app queue Map to object
-  for (const [controllerId, messages] of queueData.mobileAppQueue.entries()) {
-    queueContents.mobileAppQueue[controllerId.toString()] = messages;
+app.get('/health-detail', async (_req: Request, res: Response): Promise<void> => {
+  const broker = app.locals.messageBroker as IMessageBroker | undefined;
+  if (!broker) {
+    res.status(503).json({ status: 'broker not initialized' });
+    return;
   }
+  const stats = await broker.getStats();
+  const rateLimiterStats = app.locals.rateLimiter.getStats();
+  const queueData = await broker.getAllQueueContents();
 
-  // Convert controller queue Map to object
-  for (const [controllerId, message] of queueData.controllerQueue.entries()) {
-    queueContents.controllerQueue[controllerId.toString()] = message;
+  const queueContents: QueueContents = { mobileAppQueue: {}, controllerQueue: {} };
+  for (const [cid, msgs] of queueData.mobileAppQueue.entries()) {
+    queueContents.mobileAppQueue[cid.toString()] = msgs;
   }
-
-  // Log queue contents to console
-  console.log('[Server] /health-detail - Dumping queue contents:');
-  console.log('='.repeat(80));
-  console.log('Mobile App Queue (messages from mobile apps to controllers):');
-  console.log('-'.repeat(80));
-  for (const [controllerId, messages] of queueData.mobileAppQueue.entries()) {
-    console.log(`  Controller ID ${controllerId}: ${messages.length} message(s)`);
-    messages.forEach((msg: Message, idx: number) => {
-      console.log(`    Message ${idx + 1}:`);
-      console.log(`      Timestamp: ${msg.timestamp}`);
-      console.log(`      Sender: ${msg.sender.type} from ${msg.sender.ip}${msg.sender.authId ? ` (Auth: ${msg.sender.authId})` : ''}`);
-      console.log(`      Payload: ${msg.protobufPayload.substring(0, 50)}${msg.protobufPayload.length > 50 ? '...' : ''}`);
-      console.log(`      Expires At: ${msg.expiresAt ? new Date(msg.expiresAt).toISOString() : 'N/A'}`);
-    });
+  for (const [cid, msg] of queueData.controllerQueue.entries()) {
+    queueContents.controllerQueue[cid.toString()] = msg;
   }
-  
-  console.log('='.repeat(80));
-  console.log('Controller Queue (latest heartbeat from controllers):');
-  console.log('-'.repeat(80));
-  for (const [controllerId, message] of queueData.controllerQueue.entries()) {
-    console.log(`  Controller ID ${controllerId}:`);
-    console.log(`    Timestamp: ${message.timestamp}`);
-    console.log(`    Sender: ${message.sender.type} from ${message.sender.ip}`);
-    console.log(`    Payload: ${message.protobufPayload.substring(0, 50)}${message.protobufPayload.length > 50 ? '...' : ''}`);
-    console.log(`    Expires At: ${message.expiresAt ? new Date(message.expiresAt).toISOString() : 'N/A'}`);
-  }
-  console.log('='.repeat(80));
 
   const response: HealthDetailResponse = {
     status: 'healthy',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     queues: stats,
-    queueContents: queueContents,
+    queueContents,
     rateLimiter: rateLimiterStats,
     cognito: {
       configured: isCognitoConfigured(),
       userPoolId: COGNITO_USER_POOL_ID || 'not-set',
-      region: AWS_REGION
-    }
+      region: AWS_REGION,
+    },
+    broker: {
+      type: getBrokerType(),
+      connected: await broker.ping().catch(() => false),
+    },
   };
-
   res.status(200).json(response);
 });
 
-// 404 handler
 app.use((req: Request, res: Response): void => {
-  console.log(`[Server] 404 - Route not found: ${req.method} ${req.path}`);
-  res.status(404).json({ 
-    error: 'Route not found' 
-  });
+  console.log(`[Server] 404: ${req.method} ${req.path}`);
+  res.status(404).json({ error: 'Route not found' });
 });
 
-// Error handler
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void => {
   console.error('[Server] Error:', err);
-  res.status(500).json({ 
-    error: 'Internal server error',
-    message: err.message
-  });
+  res.status(500).json({ error: 'Internal server error', message: err.message });
 });
 
-// Function to log health data
-function logHealthData(): void {
-  const stats = app.locals.messageQueue.getStats();
-  const rateLimiterStats = app.locals.rateLimiter.getStats();
-  
-  console.log('\n' + '='.repeat(80));
-  console.log('[Health Monitor] System Health Status');
-  console.log('='.repeat(80));
-  console.log(`Timestamp: ${new Date().toISOString()}`);
-  console.log(`Uptime: ${Math.floor(process.uptime())} seconds`);
-  console.log('-'.repeat(80));
-  console.log('Queue Statistics:');
-  console.log(`  Mobile App Controllers: ${stats.mobileAppControllers}`);
-  console.log(`  Mobile App Messages: ${stats.mobileAppMessages}`);
-  console.log(`  Controller Messages: ${stats.controllerMessages}`);
-  console.log('-'.repeat(80));
-  console.log('Rate Limiter Statistics:');
-  console.log(`  Tracked Keys: ${rateLimiterStats.trackedKeys}`);
-  console.log('-'.repeat(80));
-  console.log('Cognito Configuration:');
-  console.log(`  Configured: ${isCognitoConfigured()}`);
-  console.log(`  User Pool ID: ${COGNITO_USER_POOL_ID || 'not-set'}`);
-  console.log(`  Region: ${AWS_REGION}`);
-  console.log('='.repeat(80) + '\n');
+let healthInterval: NodeJS.Timeout | null = null;
+
+async function start(): Promise<void> {
+  console.log('[Server] Starting SeaAir Mobile App API...');
+  console.log(`[Server] MESSAGE_BROKER=${getBrokerType()}`);
+
+  // Load proto definitions up front so the dashboard's payload-decoding path
+  // doesn't pay a cold-start cost on the first request.
+  initProtoDecoder();
+
+  app.locals.rateLimiter = new RateLimiter();
+  app.locals.messageBroker = await createMessageBroker();
+  console.log(`[Server] Broker initialized: ${getBrokerType()}`);
+
+  if (isCognitoConfigured()) {
+    console.log(`[Server] Cognito: ${COGNITO_USER_POOL_ID} (${AWS_REGION})`);
+  } else {
+    console.warn('[Server] WARNING: Cognito not configured - mobile auth will fail');
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[Server] Listening on port ${PORT}`);
+    console.log(
+      '[Server] Routes: /controller /mobile /mobile/beacon /config /admin ' +
+        '/dashboard/api /health /health-detail (+ SPA at /)'
+    );
+    console.log(`[Server] Dashboard SPA served from ${WEB_DIST}`);
+  });
+
+  healthInterval = setInterval(async () => {
+    const broker = app.locals.messageBroker as IMessageBroker;
+    const stats = await broker.getStats().catch(() => null);
+    if (stats) {
+      console.log(
+        `[Health] uptime=${Math.floor(process.uptime())}s broker=${getBrokerType()} ` +
+          `mobileAppControllers=${stats.mobileAppControllers} ` +
+          `mobileAppMessages=${stats.mobileAppMessages} ` +
+          `controllerMessages=${stats.controllerMessages}`
+      );
+    }
+  }, 60000);
 }
 
-// Store interval reference for cleanup
-let healthMonitorInterval: NodeJS.Timeout | null = null;
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[Server] ${signal} received, shutting down`);
+  if (healthInterval) clearInterval(healthInterval);
+  const broker = app.locals.messageBroker as IMessageBroker | undefined;
+  if (broker) await broker.destroy().catch(() => undefined);
+  await closeRedisClient().catch(() => undefined);
+  process.exit(0);
+}
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`[Server] SeaAir Mobile App API running on port ${PORT}`);
-  console.log(`[Server] Controller routes available at /controller`);
-  console.log(`[Server] Mobile app routes available at /mobile`);
-  console.log(`[Server] Configuration routes available at /config`);
-  console.log(`[Server] Health check available at /health`);
-  console.log(`[Server] Detailed health check available at /health-detail`);
-  
-  // Start periodic health monitoring (every 60 seconds)
-  healthMonitorInterval = setInterval(logHealthData, 60000);
-  console.log('[Server] Health monitoring started - logging every 60 seconds');
-});
-
-// Graceful shutdown handler
 process.on('SIGTERM', () => {
-  console.log('[Server] SIGTERM received, shutting down gracefully');
-  if (healthMonitorInterval) {
-    clearInterval(healthMonitorInterval);
-    console.log('[Server] Health monitoring stopped');
-  }
-  process.exit(0);
+  void shutdown('SIGTERM');
+});
+process.on('SIGINT', () => {
+  void shutdown('SIGINT');
 });
 
-process.on('SIGINT', () => {
-  console.log('[Server] SIGINT received, shutting down gracefully');
-  if (healthMonitorInterval) {
-    clearInterval(healthMonitorInterval);
-    console.log('[Server] Health monitoring stopped');
-  }
-  process.exit(0);
+start().catch((err) => {
+  console.error('[Server] Startup failed:', err);
+  process.exit(1);
 });
 
 export default app;

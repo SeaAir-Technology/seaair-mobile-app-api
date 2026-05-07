@@ -1,0 +1,59 @@
+name: Build and Deploy to App Runner
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', '.gitignore', 'docs/**']
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: seaair-mobile-app-api
+  AWS_ACCOUNT_ID: '120569623207'
+  APP_RUNNER_SERVICE_NAME: seaair-mobile-app-api
+  # SPA build-time config. These are PUBLIC values (they ship in the JS
+  # bundle) so checking them into the workflow is fine — they're not secrets.
+  VITE_COGNITO_AUTHORITY: https://cognito-idp.us-east-2.amazonaws.com/us-east-2_Z6wNcT7sN
+  VITE_COGNITO_CLIENT_ID: 14fs306kcr6eohdra3bq1ub1ar
+  VITE_COGNITO_DOMAIN: us-east-2z6wnct7sn.auth.us-east-2.amazoncognito.com
+  VITE_COGNITO_REDIRECT_URI: https://dashboard.seaair.com/
+  VITE_COGNITO_LOGOUT_URI: https://dashboard.seaair.com/
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::120569623207:role/seaair-gh-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+      - env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPOSITORY: ${{ env.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg VITE_COGNITO_AUTHORITY="$VITE_COGNITO_AUTHORITY" \
+            --build-arg VITE_COGNITO_CLIENT_ID="$VITE_COGNITO_CLIENT_ID" \
+            --build-arg VITE_COGNITO_DOMAIN="$VITE_COGNITO_DOMAIN" \
+            --build-arg VITE_COGNITO_REDIRECT_URI="$VITE_COGNITO_REDIRECT_URI" \
+            --build-arg VITE_COGNITO_LOGOUT_URI="$VITE_COGNITO_LOGOUT_URI" \
+            -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
+            -t $REGISTRY/$REPOSITORY:latest \
+            .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker push $REGISTRY/$REPOSITORY:latest
+      - run: |
+          set -e
+          SERVICE_ARN=$(aws apprunner list-services --region $AWS_REGION --query "ServiceSummaryList[?ServiceName=='$APP_RUNNER_SERVICE_NAME'].ServiceArn | [0]" --output text)
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "None" ]; then
+            echo "App Runner service not found yet; first creation will pick up :latest"
+            exit 0
+          fi
+          # AutoDeploymentsEnabled=true triggers deploy from ECR push above;
+          # this manual call may race and return InvalidRequestException
+          # ("not in RUNNING state") harmlessly.
+          aws apprunner start-deployment --region $AWS_REGION --service-arn "$SERVICE_ARN" || true

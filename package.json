@@ -1,28 +1,37 @@
 {
   "name": "seaair-mobile-app-api",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node dist/server.js",
+    "start": "node dist/server.js",
     "dev": "npm run build && node dist/server.js",
     "test": "npm run build && node dist/test.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "keywords": [
     "protobuf",
     "api",
     "mobile",
     "iot",
-    "controller"
+    "controller",
+    "redis",
+    "streams",
+    "dashboard"
   ],
   "author": "",
   "license": "ISC",
-  "description": "Transport layer API for SeaAir mobile app and controller communication using protobuf",
+  "description": "Transport layer API for SeaAir mobile app and controller communication using protobuf and Redis Streams; includes the support dashboard backend",
   "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.958.0",
     "@aws-sdk/client-dynamodb": "^3.958.0",
+    "@aws-sdk/client-secrets-manager": "^3.958.0",
     "@aws-sdk/lib-dynamodb": "^3.958.0",
     "aws-jwt-verify": "^5.1.1",
     "express": "^5.2.1",
+    "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^3.2.0",
     "morgan": "^1.10.1",
