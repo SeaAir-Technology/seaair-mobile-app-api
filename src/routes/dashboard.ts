@@ -30,6 +30,7 @@ import {
 import {
   listBeacons,
   listBeaconsForController,
+  resolveBeacon,
   Beacon,
 } from '../services/beacons';
 import {
@@ -43,14 +44,13 @@ import {
 const router = express.Router();
 
 const FRESHNESS_MS = 11 * 60 * 1000;
+const ACTIVE_BEACONS_FETCH_LIMIT = 200;
 
 // ---- helpers ----------------------------------------------------------------
 
 function getRedisBroker(req: Request): RedisStreamQueue | null {
   const broker = req.app.locals.messageBroker as IMessageBroker | undefined;
   if (!broker) return null;
-  // The dashboard requires Redis Streams; the in-memory MessageQueue can't
-  // satisfy it. Routes return 503 cleanly if the broker isn't a Redis one.
   if (getBrokerType() !== 'redis') return null;
   return broker as unknown as RedisStreamQueue;
 }
@@ -81,31 +81,6 @@ function enrich(msg: Message): EnrichedMessage {
   return { ...msg, decoded: decodePayload(msg.protobufPayload) };
 }
 
-/**
- * True when the firmware has signaled a beacon in its latest heartbeat.
- *
- * Reads `beacon === true` either at the root of the decoded protobuf or
- * one level down inside any sub-message. Walking one level deep gives the
- * firmware some flexibility on placement (root, status sub-message, etc.)
- * without doing an unbounded recursive search that could match unrelated
- * fields named "beacon".
- */
-function isPayloadBeaconRaised(decoded: DecodedPayload | null): boolean {
-  if (!decoded) return false;
-  const root = decoded.data as Record<string, unknown>;
-  if (root.beacon === true) return true;
-  for (const value of Object.values(root)) {
-    if (
-      value &&
-      typeof value === 'object' &&
-      (value as Record<string, unknown>).beacon === true
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // ---- /me --------------------------------------------------------------------
 
 router.get('/me', async (req: Request, res: Response): Promise<void> => {
@@ -118,11 +93,17 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
     username: req.auth.username || req.auth['cognito:username'],
     email: req.auth.email,
     groups: req.auth['cognito:groups'] || [],
-    isDashboardAdmin: true, // gate already enforced
+    isDashboardAdmin: true,
   });
 });
 
 // ---- Devices: rolled-up list for the past N seconds/minutes ----------------
+//
+// One row per controller that has at least one heartbeat in the lookback
+// window. Beacon flag is sourced from the active-beacons table (DynamoDB):
+// any controller with at least one beacon whose `expiresAt > now` gets
+// beacon: true. That float-to-top sort happens both server-side here and
+// client-side in DevicesPage; either is sufficient.
 
 router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -134,12 +115,20 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   const cutoff = Date.now() - windowMs;
 
   try {
-    const streamKeys = await broker.listStreamKeys();
+    // Pull stream keys + active beacons in parallel; both are needed before
+    // assembling the response and neither blocks the other.
+    const [streamKeys, activeBeaconsResult] = await Promise.all([
+      broker.listStreamKeys(),
+      listBeacons(ACTIVE_BEACONS_FETCH_LIMIT),
+    ]);
     const fw2mobileKeys = streamKeys.filter((k) =>
       k.startsWith('stream:fw2mobile:')
     );
+    const activeBeaconControllers = new Set<number>(
+      activeBeaconsResult.beacons.map((b) => b.controllerId)
+    );
 
-    type Lookup = { controllerId: number; lastSeenMs: number; beacon: boolean };
+    type Lookup = { controllerId: number; lastSeenMs: number };
     const lookups = await Promise.all(
       fw2mobileKeys.map(async (key): Promise<Lookup | null> => {
         const idStr = key.split(':')[2];
@@ -150,21 +139,19 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
         const msg = history[0];
         const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
         if (tsMs < cutoff) return null;
-        const decoded = decodePayload(msg.protobufPayload);
-        const beacon = isPayloadBeaconRaised(decoded);
-        return { controllerId, lastSeenMs: tsMs, beacon };
+        return { controllerId, lastSeenMs: tsMs };
       })
     );
 
     const now = Date.now();
     const devices = lookups
       .filter((x): x is Lookup => x !== null)
-      .map(({ controllerId, lastSeenMs, beacon }) => ({
+      .map(({ controllerId, lastSeenMs }) => ({
         controllerId,
         lastSeenAt: new Date(lastSeenMs).toISOString(),
         ageMs: now - lastSeenMs,
         alive: now - lastSeenMs <= FRESHNESS_MS,
-        beacon,
+        beacon: activeBeaconControllers.has(controllerId),
       }));
 
     devices.sort((a, b) => {
@@ -294,11 +281,6 @@ router.get('/devices/:controllerId/history', async (req: Request, res: Response)
 });
 
 // ---- Devices: "Mark all received" ------------------------------------------
-//
-// Advances the consumer-group cursor to skip any currently-queued mobile
-// commands so the firmware doesn't process them, and acks any entries
-// stuck in the consumer group's pending-entries-list. Backs the dashboard
-// button with the same name on the controller detail page.
 
 router.post('/devices/:controllerId/mark-all-received', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -311,9 +293,6 @@ router.post('/devices/:controllerId/mark-all-received', async (req: Request, res
     res.status(400).json({ error: 'controllerId must be a positive integer' });
     return;
   }
-  // Default to mobile2fw because that's the only channel the firmware
-  // drains via consumer group; fw2mobile is accepted for symmetry but is
-  // a no-op there (mobile reads via XREVRANGE without a group).
   const directionParam = (req.query.direction as string) || 'mobile2fw';
   if (directionParam !== 'mobile2fw' && directionParam !== 'fw2mobile') {
     res.status(400).json({ error: 'direction must be mobile2fw or fw2mobile' });
@@ -440,6 +419,36 @@ router.get('/beacons/controller/:controllerId', async (req: Request, res: Respon
     res.json({ controllerId, count: beacons.length, beacons });
   } catch (err: any) {
     console.error(`[Dashboard] /beacons/controller/:id failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /dashboard/api/beacons/:createdAt/:beaconId/resolve
+ *
+ * Clears (resolves) a beacon by setting its expiresAt to now. Both
+ * createdAt and beaconId are needed because the DynamoDB sort key is the
+ * composite `{createdAt}#{beaconId}`. Path params are URL-decoded by
+ * Express, so the client must encodeURIComponent both segments before
+ * sending (createdAt is an ISO 8601 string with `:` chars).
+ */
+router.post('/beacons/:createdAt/:beaconId/resolve', async (req: Request, res: Response): Promise<void> => {
+  const { createdAt, beaconId } = req.params;
+  if (!createdAt || !beaconId) {
+    res.status(400).json({ error: 'createdAt and beaconId path params required' });
+    return;
+  }
+  const actor = req.auth?.email || req.auth?.username || req.auth?.sub;
+  try {
+    await resolveBeacon(createdAt, beaconId);
+    console.log(`[Dashboard] beacon ${beaconId} resolved by ${actor}`);
+    res.json({ success: true, beaconId, createdAt });
+  } catch (err: any) {
+    if (err.name === 'ConditionalCheckFailedException') {
+      res.status(404).json({ error: 'Beacon not found' });
+      return;
+    }
+    console.error(`[Dashboard] resolve beacon failed: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

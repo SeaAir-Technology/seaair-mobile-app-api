@@ -6,7 +6,16 @@
  *   sk = "{createdAt}#{beaconId}"          (sort: chronological + uniqueness)
  *   GSI byController: controllerId + createdAt
  *
- * TTL on `expiresAt` field auto-deletes after 1 year.
+ * Lifecycle:
+ *   - createBeacon sets expiresAt = createdAt + 24h. DynamoDB TTL eventually
+ *     deletes the row, but reads filter on `expiresAt > now` so cleared
+ *     beacons disappear from the dashboard immediately.
+ *   - resolveBeacon sets expiresAt = now (epoch seconds), which fails the
+ *     same read filter on the next call. Idempotent: re-resolving an
+ *     already-resolved beacon is a no-op semantically (it lowers expiresAt
+ *     further, still <now).
+ *
+ * TTL on `expiresAt` field auto-deletes after the deadline.
  */
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -16,11 +25,12 @@ import {
   PutCommand,
   QueryCommand,
   GetCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { getAWSConfig } from '../config/cognito';
 
 const TABLE_NAME = process.env.BEACONS_TABLE_NAME || 'seaair-beacons';
-const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+const ONE_DAY_SECONDS = 24 * 60 * 60;
 
 let docClient: DynamoDBDocumentClient | null = null;
 
@@ -41,6 +51,10 @@ function client(): DynamoDBDocumentClient {
   return docClient;
 }
 
+function nowEpochSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
 export interface Beacon {
   beaconId: string;
   controllerId: number;
@@ -48,7 +62,7 @@ export interface Beacon {
   userEmail: string;
   message?: string;        // free-text from the user
   createdAt: string;       // ISO 8601
-  expiresAt: number;       // epoch seconds, used by DynamoDB TTL
+  expiresAt: number;       // epoch seconds, used by DynamoDB TTL + read filter
 }
 
 export interface CreateBeaconInput {
@@ -61,7 +75,7 @@ export interface CreateBeaconInput {
 export async function createBeacon(input: CreateBeaconInput): Promise<Beacon> {
   const beaconId = randomUUID();
   const createdAt = new Date().toISOString();
-  const expiresAt = Math.floor(Date.now() / 1000) + ONE_YEAR_SECONDS;
+  const expiresAt = nowEpochSeconds() + ONE_DAY_SECONDS;
 
   const beacon: Beacon = {
     beaconId,
@@ -82,26 +96,61 @@ export async function createBeacon(input: CreateBeaconInput): Promise<Beacon> {
     },
   }));
 
-  console.log(`[Beacons] Created beacon ${beaconId} for controller ${input.controllerId} from ${input.userEmail}`);
+  console.log(`[Beacons] Created beacon ${beaconId} for controller ${input.controllerId} from ${input.userEmail}, expires in 24h`);
   return beacon;
 }
 
 /**
- * List recent beacons newest-first. `before` accepts a sk value
- * ("{createdAt}#{beaconId}") for keyset pagination.
+ * Resolve (clear) a beacon by setting its expiresAt to now. The next read
+ * filter (`expiresAt > now`) drops it from the active list immediately.
+ * DynamoDB TTL will eventually delete the row from storage.
+ *
+ * Throws if the beacon doesn't exist (ConditionalCheckFailed) so callers
+ * can surface a 404 rather than silently creating something.
+ */
+export async function resolveBeacon(
+  createdAt: string,
+  beaconId: string
+): Promise<void> {
+  const sk = `${createdAt}#${beaconId}`;
+  await client().send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { pk: 'BEACON', sk },
+    UpdateExpression: 'SET expiresAt = :now',
+    ConditionExpression: 'attribute_exists(pk)',
+    ExpressionAttributeValues: {
+      ':now': nowEpochSeconds(),
+    },
+  }));
+  console.log(`[Beacons] Resolved beacon ${beaconId} (sk=${sk})`);
+}
+
+/**
+ * List recent ACTIVE beacons newest-first. Active = expiresAt > now.
+ * `before` accepts a sk value ("{createdAt}#{beaconId}") for keyset
+ * pagination. The expiresAt filter is applied AFTER the page is read, so a
+ * page may contain fewer than `limit` items if many in that page have been
+ * cleared/expired; the cursor still advances correctly.
  */
 export async function listBeacons(limit: number, before?: string): Promise<{
   beacons: Beacon[];
   nextCursor?: string;
 }> {
+  const filterParts: string[] = ['expiresAt > :now'];
+  const exprValues: Record<string, any> = {
+    ':pk': 'BEACON',
+    ':now': nowEpochSeconds(),
+  };
+  if (before) {
+    filterParts.push('sk < :before');
+    exprValues[':before'] = before;
+  }
+
   const result = await client().send(new QueryCommand({
     TableName: TABLE_NAME,
     KeyConditionExpression: 'pk = :pk',
-    ExpressionAttributeValues: {
-      ':pk': 'BEACON',
-      ...(before ? { ':before': before } : {}),
-    },
-    ...(before ? { FilterExpression: 'sk < :before' } : {}),
+    FilterExpression: filterParts.join(' AND '),
+    ExpressionAttributeValues: exprValues,
     ScanIndexForward: false,
     Limit: limit,
   }));
@@ -111,6 +160,9 @@ export async function listBeacons(limit: number, before?: string): Promise<{
   return { beacons, nextCursor: last };
 }
 
+/**
+ * List ACTIVE beacons for one controller, newest-first.
+ */
 export async function listBeaconsForController(
   controllerId: number,
   limit: number
@@ -119,7 +171,11 @@ export async function listBeaconsForController(
     TableName: TABLE_NAME,
     IndexName: 'byController',
     KeyConditionExpression: 'controllerId = :cid',
-    ExpressionAttributeValues: { ':cid': controllerId },
+    FilterExpression: 'expiresAt > :now',
+    ExpressionAttributeValues: {
+      ':cid': controllerId,
+      ':now': nowEpochSeconds(),
+    },
     ScanIndexForward: false,
     Limit: limit,
   }));
