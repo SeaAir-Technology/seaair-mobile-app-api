@@ -14,9 +14,10 @@
  *     same read filter on the next call. Idempotent: re-resolving an
  *     already-resolved beacon is a no-op semantically (it lowers expiresAt
  *     further, still <now).
- *   - createBeacon also fires an out-of-band SNS notification (best-effort,
- *     never blocks success) so support sees beacons via email in addition
- *     to the dashboard.
+ *   - createBeacon kicks off an out-of-band SNS notification but does NOT
+ *     await it. SNS reachability/latency must never delay the HTTP
+ *     confirmation back to the mobile app — the beacon is durable in
+ *     DynamoDB the moment the PutCommand returns.
  *
  * TTL on `expiresAt` field auto-deletes after the deadline.
  */
@@ -102,10 +103,20 @@ export async function createBeacon(input: CreateBeaconInput): Promise<Beacon> {
 
   console.log(`[Beacons] Created beacon ${beaconId} for controller ${input.controllerId} from ${input.userEmail}, expires in 24h`);
 
-  // Best-effort out-of-band email notification. Awaited so a transient SNS
-  // failure surfaces in the route's logs near where it happened, but its
-  // own try/catch ensures we never bubble an error back to the caller.
-  await notifyBeaconRaised(beacon);
+  // Fire SNS notification in the background. We must NOT await this:
+  // when SNS is unreachable from the App Runner VPC connector subnets
+  // (no SNS VPC endpoint, no NAT) the SDK's connection retry budget can
+  // run for tens of seconds, which would push the /mobile/beacon HTTP
+  // response past the mobile app's request timeout and the user would
+  // think their beacon failed even though it's already durable in
+  // DynamoDB. notifyBeaconRaised has its own internal try/catch +
+  // timeout, so this promise should never reject in practice; the
+  // .catch() is defensive in case that contract is ever broken.
+  notifyBeaconRaised(beacon).catch((err) => {
+    console.error(
+      `[Beacons] Background SNS notification raised: ${err?.message || err}`
+    );
+  });
 
   return beacon;
 }

@@ -12,11 +12,11 @@
  *                           used to build deep links in the email body.
  *                           Defaults to https://mobile-app-api.seaair.com.
  *
- * Uses await + try/catch so that if SNS is unhappy, beacon creation
- * still succeeds — the customer raised a request, and we'd rather
- * have it stored and visible in the dashboard than fail the request
- * because the alerting fan-out had a hiccup. Failures are logged so
- * we notice in CloudWatch.
+ * The publish is bounded by a hard timeout so it can't hang for the
+ * SDK's full retry budget when SNS is unreachable from this network
+ * (e.g. App Runner subnets with no SNS VPC endpoint or NAT). Callers
+ * are expected to NOT await this function for the same reason — see
+ * the comment in beacons.createBeacon.
  */
 
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
@@ -27,12 +27,36 @@ const TOPIC_ARN = process.env.SNS_BEACON_TOPIC_ARN || '';
 const DASHBOARD_URL =
   process.env.DASHBOARD_URL || 'https://mobile-app-api.seaair.com';
 
+// Hard ceiling on a single publish attempt. 5s is well above SNS's
+// median latency from inside AWS, but short enough that hung calls
+// don't pile up if the network path is broken. The SDK's default
+// retry budget can otherwise run 30+ seconds before giving up.
+const PUBLISH_TIMEOUT_MS = 5000;
+
 let snsClient: SNSClient | null = null;
 function client(): SNSClient {
   if (!snsClient) {
     snsClient = new SNSClient({ region: AWS_REGION });
   }
   return snsClient;
+}
+
+/**
+ * Race a promise against a timeout. The timeout cleanup ensures the
+ * timer is unregistered as soon as the original promise settles, so
+ * we don't keep the event loop alive longer than necessary.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms
+    );
+  });
+  return Promise.race([p, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
 }
 
 export async function notifyBeaconRaised(beacon: Beacon): Promise<void> {
@@ -63,12 +87,16 @@ export async function notifyBeaconRaised(beacon: Beacon): Promise<void> {
   ].join('\n');
 
   try {
-    const result = await client().send(
-      new PublishCommand({
-        TopicArn: TOPIC_ARN,
-        Subject: subject,
-        Message: body,
-      })
+    const result = await withTimeout(
+      client().send(
+        new PublishCommand({
+          TopicArn: TOPIC_ARN,
+          Subject: subject,
+          Message: body,
+        })
+      ),
+      PUBLISH_TIMEOUT_MS,
+      'SNS publish'
     );
     console.log(
       `[BeaconAlerts] Sent notification for beacon ${beacon.beaconId} (MessageId=${result.MessageId})`
