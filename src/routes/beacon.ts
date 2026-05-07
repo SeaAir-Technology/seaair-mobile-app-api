@@ -1,15 +1,21 @@
 /**
  * Beacon submission route - mounted at /mobile/beacon.
  *
- * The mobile app POSTs here when a user requests support. The user's email
- * comes from their Cognito JWT (we do not trust a client-provided email).
+ * The mobile app POSTs here when a user requests support. The user's
+ * identity comes from their Cognito JWT (we don't trust client-supplied
+ * identity). Body: { controllerId: number, message?: string }.
  *
- * Body: { controllerId: number, message?: string }
+ * Email resolution: Cognito access tokens don't include the email claim
+ * by default, so we don't depend on req.auth.email being populated. We
+ * resolve it server-side from req.auth.sub via the cognitoUser cache.
+ * If a future Cognito access-token customization adds email to the JWT,
+ * the lookup short-circuits and we use the claim directly.
  */
 
 import express, { Request, Response } from 'express';
 import { verifyJWT } from '../auth';
 import { createBeacon } from '../services/beacons';
+import { getUserEmailBySub } from '../services/cognitoUser';
 
 const router = express.Router();
 
@@ -43,13 +49,27 @@ router.post('/', verifyJWT, async (req: Request, res: Response): Promise<void> =
   }
 
   const userId = req.auth.sub;
-  const userEmail = req.auth.email;
-  if (!userEmail) {
-    res.status(400).json({
-      error: 'JWT missing email claim',
-      message: 'Configure Cognito to include email on the access token',
-    });
+  if (!userId) {
+    res.status(401).json({ error: 'JWT missing sub claim' });
     return;
+  }
+
+  // Email resolution. Try the JWT claim first (works free if Cognito ever
+  // starts emitting it), then fall back to a sub\u2192email lookup against
+  // the user pool. The lookup is cached in-memory so steady-state cost is
+  // about one Cognito ListUsers call per user per hour per instance.
+  let userEmail = (req.auth as any).email as string | undefined;
+  if (!userEmail) {
+    const looked = await getUserEmailBySub(userId);
+    if (looked) userEmail = looked;
+  }
+  if (!userEmail) {
+    // Don't fail the beacon over a missing email \u2014 the user is authenticated
+    // and the controller still needs help. Store a placeholder that includes
+    // the first 8 chars of sub so support staff can still tell which user it
+    // was via the userId field on the beacon record.
+    console.warn(`[Beacon] Could not resolve email for sub ${userId}; storing placeholder`);
+    userEmail = `(no-email:${userId.slice(0, 8)})`;
   }
 
   try {
