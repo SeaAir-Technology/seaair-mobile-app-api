@@ -23,7 +23,7 @@ export function History({ controllerId, filters }: Props): JSX.Element {
 
   return (
     <div className="p-4 space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-ink-500">Direction:</span>
         {(['both', 'fw2mobile', 'mobile2fw'] as const).map((d) => (
           <button
@@ -38,8 +38,8 @@ export function History({ controllerId, filters }: Props): JSX.Element {
             {d === 'both'
               ? 'Both'
               : d === 'fw2mobile'
-              ? 'FW → Mobile'
-              : 'Mobile → FW'}
+              ? 'Firmware → Mobile'
+              : 'Mobile → Firmware'}
           </button>
         ))}
         {isFetching && (

@@ -7,7 +7,11 @@ interface Props {
 
 // Minimal collapsible tree for decoded protobuf payloads. The decoder on
 // the server returns plain JSON-friendly objects (numbers, strings, nested
-// objects, arrays), so we just render those generically.
+// objects, arrays), so we just render those generically. Default state
+// for every node is open: the typical decoded BLE.Msg has at most three
+// or four levels of nesting, and the operator almost always wants to see
+// the full payload at a glance rather than click-drilling. Each node is
+// still individually collapsible if the layout gets too tall.
 export function ProtoTree({ data, rootKey }: Props): JSX.Element {
   return <Node value={data} keyName={rootKey} depth={0} />;
 }
@@ -21,7 +25,7 @@ function Node({
   keyName?: string;
   depth: number;
 }): JSX.Element {
-  const [open, setOpen] = useState(depth < 2);
+  const [open, setOpen] = useState(true);
   const indent = { paddingLeft: `${depth * 12}px` };
 
   if (value === null || value === undefined) {

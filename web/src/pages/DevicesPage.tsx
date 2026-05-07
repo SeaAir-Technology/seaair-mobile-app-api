@@ -15,8 +15,8 @@ const WINDOW = '1m';
 // controller seen in the active window, beacon-active devices floated to
 // the top, paginated client-side, filtered live by the controller-identifier
 // search field), selected-device detail on the right. URL is the source of
-// truth for the selected controller, so beacon click-throughs (which navigate
-// to /devices/:id) just work.
+// truth for the selected controller, so beacon click-throughs (which
+// navigate to /devices/:id) just work.
 export function DevicesPage(): JSX.Element {
   const { controllerId: cidStr } = useParams<{ controllerId?: string }>();
   const controllerId = cidStr ? parseInt(cidStr, 10) : null;
@@ -81,13 +81,24 @@ function DeviceListColumn({
 }): JSX.Element {
   const { data, isLoading, error, isFetching } = useDeviceList(WINDOW);
 
+  // Stable client-side sort: beacon-active first, then by controllerId
+  // ascending. This decouples the visible order from the per-device
+  // "last seen" timestamp, so the list doesn't visibly shuffle every
+  // few seconds as relative-time labels tick. Beacon-active devices
+  // still float to the top so the operator can't miss them, but within
+  // the beacon and non-beacon groups, position is deterministic and
+  // stable across polls. The server still returns devices sorted by
+  // recency for any caller that wants that ordering; we just override
+  // it here for the live view.
   const filteredDevices = useMemo(() => {
     if (!data) return [];
+    const sorted = [...data.devices].sort((a, b) => {
+      if (a.beacon !== b.beacon) return a.beacon ? -1 : 1;
+      return a.controllerId - b.controllerId;
+    });
     const trimmed = searchText.trim();
-    if (!trimmed) return data.devices;
-    return data.devices.filter((d) =>
-      String(d.controllerId).includes(trimmed)
-    );
+    if (!trimmed) return sorted;
+    return sorted.filter((d) => String(d.controllerId).includes(trimmed));
   }, [data, searchText]);
 
   const pageCount = Math.max(1, Math.ceil(filteredDevices.length / PAGE_SIZE));
@@ -177,6 +188,11 @@ function DeviceRow({
   active: boolean;
   onClick: () => void;
 }): JSX.Element {
+  // Single-line dense row. Status dot + optional beacon chip on the
+  // left, controller identifier in the middle, relative-time label
+  // pinned to the right. The relative time updates as the data refetches
+  // every 3s; the controller-id-based sort above keeps the row in place
+  // so only the right-hand label visibly ticks.
   return (
     <li>
       <button
@@ -205,10 +221,6 @@ function DeviceRow({
           >
             {formatRelativeTime(device.lastSeenAt)}
           </span>
-        </div>
-        <div className="text-xs text-ink-500 mt-1 font-mono truncate">
-          {device.alive ? 'Online' : 'Stale'} · last seen{' '}
-          {formatTimestamp(device.lastSeenAt)}
         </div>
       </button>
     </li>
