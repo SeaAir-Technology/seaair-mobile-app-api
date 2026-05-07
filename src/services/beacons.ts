@@ -14,6 +14,9 @@
  *     same read filter on the next call. Idempotent: re-resolving an
  *     already-resolved beacon is a no-op semantically (it lowers expiresAt
  *     further, still <now).
+ *   - createBeacon also fires an out-of-band SNS notification (best-effort,
+ *     never blocks success) so support sees beacons via email in addition
+ *     to the dashboard.
  *
  * TTL on `expiresAt` field auto-deletes after the deadline.
  */
@@ -28,6 +31,7 @@ import {
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { getAWSConfig } from '../config/cognito';
+import { notifyBeaconRaised } from './beaconAlerts';
 
 const TABLE_NAME = process.env.BEACONS_TABLE_NAME || 'seaair-beacons';
 const ONE_DAY_SECONDS = 24 * 60 * 60;
@@ -58,11 +62,11 @@ function nowEpochSeconds(): number {
 export interface Beacon {
   beaconId: string;
   controllerId: number;
-  userId: string;          // Cognito sub
+  userId: string;
   userEmail: string;
-  message?: string;        // free-text from the user
-  createdAt: string;       // ISO 8601
-  expiresAt: number;       // epoch seconds, used by DynamoDB TTL + read filter
+  message?: string;
+  createdAt: string;
+  expiresAt: number;
 }
 
 export interface CreateBeaconInput {
@@ -97,17 +101,15 @@ export async function createBeacon(input: CreateBeaconInput): Promise<Beacon> {
   }));
 
   console.log(`[Beacons] Created beacon ${beaconId} for controller ${input.controllerId} from ${input.userEmail}, expires in 24h`);
+
+  // Best-effort out-of-band email notification. Awaited so a transient SNS
+  // failure surfaces in the route's logs near where it happened, but its
+  // own try/catch ensures we never bubble an error back to the caller.
+  await notifyBeaconRaised(beacon);
+
   return beacon;
 }
 
-/**
- * Resolve (clear) a beacon by setting its expiresAt to now. The next read
- * filter (`expiresAt > now`) drops it from the active list immediately.
- * DynamoDB TTL will eventually delete the row from storage.
- *
- * Throws if the beacon doesn't exist (ConditionalCheckFailed) so callers
- * can surface a 404 rather than silently creating something.
- */
 export async function resolveBeacon(
   createdAt: string,
   beaconId: string
@@ -125,13 +127,6 @@ export async function resolveBeacon(
   console.log(`[Beacons] Resolved beacon ${beaconId} (sk=${sk})`);
 }
 
-/**
- * List recent ACTIVE beacons newest-first. Active = expiresAt > now.
- * `before` accepts a sk value ("{createdAt}#{beaconId}") for keyset
- * pagination. The expiresAt filter is applied AFTER the page is read, so a
- * page may contain fewer than `limit` items if many in that page have been
- * cleared/expired; the cursor still advances correctly.
- */
 export async function listBeacons(limit: number, before?: string): Promise<{
   beacons: Beacon[];
   nextCursor?: string;
@@ -160,9 +155,6 @@ export async function listBeacons(limit: number, before?: string): Promise<{
   return { beacons, nextCursor: last };
 }
 
-/**
- * List ACTIVE beacons for one controller, newest-first.
- */
 export async function listBeaconsForController(
   controllerId: number,
   limit: number

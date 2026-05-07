@@ -10,6 +10,17 @@
  * resolve it server-side from req.auth.sub via the cognitoUser cache.
  * If a future Cognito access-token customization adds email to the JWT,
  * the lookup short-circuits and we use the claim directly.
+ *
+ * Fallback when both the claim and the lookup return nothing:
+ *   - Federated users (Google, Sign in with Apple) get their
+ *     cognito:username, which is in the form "google_<id>" or
+ *     "signinwithapple_<id>" — enough for support to identify the user
+ *     by provider.
+ *   - Native users get a sub-prefix placeholder, since their
+ *     cognito:username is the same UUID as sub and adds no info.
+ *   - The userId field on the beacon record always carries the full sub
+ *     so support can cross-reference exactly even when userEmail is a
+ *     placeholder.
  */
 
 import express, { Request, Response } from 'express';
@@ -54,22 +65,37 @@ router.post('/', verifyJWT, async (req: Request, res: Response): Promise<void> =
     return;
   }
 
-  // Email resolution. Try the JWT claim first (works free if Cognito ever
-  // starts emitting it), then fall back to a sub\u2192email lookup against
-  // the user pool. The lookup is cached in-memory so steady-state cost is
-  // about one Cognito ListUsers call per user per hour per instance.
+  // 1. Trust the JWT email claim if present (free, future-proof if Cognito
+  //    is configured to emit it later).
+  // 2. Look up via Cognito ListUsers by sub. Cached in-memory.
+  // 3. Fall back to the cognito:username for federated users so support
+  //    sees "google_..." or "signinwithapple_..." instead of an opaque
+  //    sub prefix; the userId field still has the full sub.
   let userEmail = (req.auth as any).email as string | undefined;
   if (!userEmail) {
     const looked = await getUserEmailBySub(userId);
     if (looked) userEmail = looked;
   }
   if (!userEmail) {
-    // Don't fail the beacon over a missing email \u2014 the user is authenticated
-    // and the controller still needs help. Store a placeholder that includes
-    // the first 8 chars of sub so support staff can still tell which user it
-    // was via the userId field on the beacon record.
-    console.warn(`[Beacon] Could not resolve email for sub ${userId}; storing placeholder`);
-    userEmail = `(no-email:${userId.slice(0, 8)})`;
+    const cognitoUsername =
+      ((req.auth as any)['cognito:username'] as string | undefined) ||
+      ((req.auth as any).username as string | undefined);
+    if (
+      cognitoUsername &&
+      // Native-user usernames are the same UUID as sub; surfacing them
+      // would be no more useful than the sub prefix. Federated usernames
+      // start with the provider name ("google_", "signinwithapple_"),
+      // which is what we want to expose.
+      cognitoUsername !== userId &&
+      !/^[0-9a-f-]{36}$/i.test(cognitoUsername)
+    ) {
+      userEmail = `(${cognitoUsername})`;
+    } else {
+      userEmail = `(no-email:${userId.slice(0, 8)})`;
+    }
+    console.warn(
+      `[Beacon] Could not resolve email for sub ${userId}; storing fallback ${userEmail}`
+    );
   }
 
   try {
