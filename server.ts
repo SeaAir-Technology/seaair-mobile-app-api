@@ -16,6 +16,7 @@ import mobileRoutes from './src/routes/mobile';
 import configRoutes from './src/routes/config';
 import adminRoutes from './src/routes/admin';
 import beaconRoutes from './src/routes/beacon';
+import consentRoutes from './src/routes/consent';
 import dashboardRoutes from './src/routes/dashboard';
 import { requireDashboardAdmin } from './src/middleware/requireDashboardAdmin';
 import { initProtoDecoder } from './src/services/protoDecoder';
@@ -35,6 +36,7 @@ app.use(morgan('combined'));
 app.use('/controller', controllerRoutes);
 app.use('/mobile', mobileRoutes);
 app.use('/mobile/beacon', beaconRoutes);
+app.use('/mobile/consent', consentRoutes);
 app.use('/config', configRoutes);
 app.use('/admin', adminRoutes);
 
@@ -171,7 +173,7 @@ async function start(): Promise<void> {
   app.listen(PORT, () => {
     console.log(`[Server] Listening on port ${PORT}`);
     console.log(
-      '[Server] Routes: /controller /mobile /mobile/beacon /config /admin ' +
+      '[Server] Routes: /controller /mobile /mobile/beacon /mobile/consent /config /admin ' +
         '/dashboard/api /health /health-detail (+ SPA at /)'
     );
     console.log(`[Server] Dashboard SPA served from ${WEB_DIST}`);
