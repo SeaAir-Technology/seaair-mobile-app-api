@@ -69,7 +69,7 @@ export class RedisStreamQueue implements IMessageBroker {
 
   constructor(redis: Redis) {
     this.redis = redis;
-    this.maxLen = parseInt(process.env.STREAM_MAXLEN || '100000', 10);
+    this.maxLen = parseInt(process.env.STREAM_MAXLEN || '1000000', 10);
   }
 
   private serialize(message: Message): string[] {
