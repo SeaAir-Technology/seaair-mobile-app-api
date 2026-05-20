@@ -60,7 +60,7 @@ router.post('/device', verifyJWT, async (req: Request, res: Response): Promise<v
     console.log(`[Config] Rate limit exceeded for user ${userId}`);
     res.status(429).json({ 
       error: 'Rate limit exceeded',
-      message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.'
+      message: 'Too many requests from this account. Maximum 60 requests per 30 seconds.'
     });
     return;
   }
@@ -71,7 +71,7 @@ router.post('/device', verifyJWT, async (req: Request, res: Response): Promise<v
     console.log(`[Config] Rate limit exceeded for IP ${ip}`);
     res.status(429).json({ 
       error: 'Rate limit exceeded',
-      message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.'
+      message: 'Too many requests from this IP. Maximum 60 requests per 30 seconds.'
     });
     return;
   }
@@ -136,7 +136,7 @@ router.get('/device/:controllerId', verifyJWT, async (req: Request, res: Respons
     console.log(`[Config] Rate limit exceeded for user ${userId}`);
     res.status(429).json({ 
       error: 'Rate limit exceeded',
-      message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.'
+      message: 'Too many requests from this account. Maximum 60 requests per 30 seconds.'
     });
     return;
   }
@@ -147,7 +147,7 @@ router.get('/device/:controllerId', verifyJWT, async (req: Request, res: Respons
     console.log(`[Config] Rate limit exceeded for IP ${ip}`);
     res.status(429).json({ 
       error: 'Rate limit exceeded',
-      message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.'
+      message: 'Too many requests from this IP. Maximum 60 requests per 30 seconds.'
     });
     return;
   }
@@ -224,7 +224,7 @@ router.delete('/device/:controllerId', verifyJWT, async (req: Request, res: Resp
     console.log(`[Config] Rate limit exceeded for user ${userId}`);
     res.status(429).json({ 
       error: 'Rate limit exceeded',
-      message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.'
+      message: 'Too many requests from this account. Maximum 60 requests per 30 seconds.'
     });
     return;
   }
@@ -235,7 +235,7 @@ router.delete('/device/:controllerId', verifyJWT, async (req: Request, res: Resp
     console.log(`[Config] Rate limit exceeded for IP ${ip}`);
     res.status(429).json({ 
       error: 'Rate limit exceeded',
-      message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.'
+      message: 'Too many requests from this IP. Maximum 60 requests per 30 seconds.'
     });
     return;
   }

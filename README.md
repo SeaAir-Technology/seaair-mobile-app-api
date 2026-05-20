@@ -14,7 +14,7 @@ This Node.js API serves as a message transport layer between a mobile applicatio
 - **Separate queues** for mobile app and controller messages
 - **Message expiration** (11 minutes)
 - **JWT authentication** for mobile app routes
-- **Rate limiting** (25 requests per 30 seconds per controller/account)
+- **Rate limiting** (60 requests per 30 seconds per controller/account)
 - **Protobuf payload** support
 - **Request logging** to console
 
@@ -268,8 +268,8 @@ Health check endpoint with queue statistics and Cognito configuration status.
 ## Rate Limiting
 
 The API implements rate limiting to prevent abuse:
-- Maximum **25 requests per 30 seconds** per controller from the same account
-- Maximum **25 requests per 30 seconds** per controller from the same IP address
+- Maximum **60 requests per 30 seconds** per controller from the same account
+- Maximum **60 requests per 30 seconds** per controller from the same IP address
 - Requests exceeding the limit receive a `429 Too Many Requests` response
 
 ## JWT Authentication

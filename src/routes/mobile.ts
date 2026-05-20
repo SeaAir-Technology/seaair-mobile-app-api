@@ -75,12 +75,12 @@ router.post('/message', verifyJWT, async (req: Request, res: Response): Promise<
 
   const authRateLimitKey = `auth:${authId}`;
   if (!req.app.locals.rateLimiter.checkLimit(authRateLimitKey)) {
-    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this account. Maximum 25 requests per 30 seconds.' });
+    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this account. Maximum 60 requests per 30 seconds.' });
     return;
   }
   const ipRateLimitKey = `ip:${ip}`;
   if (!req.app.locals.rateLimiter.checkLimit(ipRateLimitKey)) {
-    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this IP. Maximum 25 requests per 30 seconds.' });
+    res.status(429).json({ error: 'Rate limit exceeded', message: 'Too many requests from this IP. Maximum 60 requests per 30 seconds.' });
     return;
   }
   req.app.locals.rateLimiter.recordRequest(authRateLimitKey);

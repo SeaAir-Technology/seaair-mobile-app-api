@@ -203,7 +203,7 @@ Response:
 
 ## Example 6: Rate Limiting
 
-The API will block excessive requests (more than 25 in 30 seconds):
+The API will block excessive requests (more than 60 in 30 seconds):
 
 ```bash
 # Send 26 requests rapidly
@@ -219,7 +219,7 @@ The first 25 requests will succeed. The 26th request will return:
 ```json
 {
   "error": "Rate limit exceeded",
-  "message": "Too many requests. Maximum 25 requests per 30 seconds."
+  "message": "Too many requests. Maximum 60 requests per 30 seconds."
 }
 ```
 

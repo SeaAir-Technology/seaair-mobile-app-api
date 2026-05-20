@@ -1,7 +1,7 @@
 /**
  * Rate limiter to prevent abuse
  * Tracks requests per controller and per source (IP/account)
- * Blocks if 25 or more requests in 30 seconds
+ * Blocks if 60 or more requests in 30 seconds
  */
 
 import { RateLimiterStats } from './types';
@@ -45,7 +45,7 @@ export class RateLimiter {
     this.requests.set(key, recentTimestamps);
 
     // Check if rate limit exceeded
-    if (recentTimestamps.length >= 25) {
+    if (recentTimestamps.length >= 60) {
       console.log(`[RateLimiter] Rate limit exceeded for ${key}. Request count: ${recentTimestamps.length}`);
       return false;
     }
