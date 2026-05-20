@@ -26,7 +26,7 @@
  */
 
 import { Redis } from 'ioredis';
-import { IMessageBroker, Message, QueueStats } from './types';
+import { ControllerMessagesSinceResult, IMessageBroker, Message, QueueStats } from './types';
 
 const FRESHNESS_WINDOW_MS = 11 * 60 * 1000;
 const FW_GROUP = 'fw';
@@ -209,6 +209,51 @@ export class RedisStreamQueue implements IMessageBroker {
       return null;
     }
     return msg;
+  }
+
+  async getControllerMessagesSince(
+    controllerId: number,
+    sinceStreamId: string,
+    maxCount: number,
+  ): Promise<ControllerMessagesSinceResult> {
+    const stream = streamKey('fw2mobile', controllerId);
+
+    // XRANGE with `(<id>` is an exclusive lower bound — entries with id
+    // strictly greater than `sinceStreamId`, in ascending order. We fetch
+    // maxCount+1 so we can detect "the cap was hit and there's more" without
+    // a second round-trip, and slice back to maxCount before returning.
+    const fetchLimit = maxCount + 1;
+    let entries: Array<[string, string[]]>;
+    try {
+      entries = (await this.redis.xrange(
+        stream,
+        `(${sinceStreamId}`,
+        '+',
+        'COUNT',
+        fetchLimit,
+      )) as Array<[string, string[]]>;
+    } catch (err: any) {
+      // A malformed `since` id surfaces as a syntax error from Redis.
+      // Translate to "nothing since that checkpoint" so a single bad
+      // client request can't tank the route — callers can retry with a
+      // valid id (or no id, to bootstrap).
+      console.warn(
+        `[RedisBroker] xrange ${stream} since=${sinceStreamId} failed (${err?.message ?? err}); ` +
+          `returning empty result`,
+      );
+      return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
+    }
+
+    if (!entries || entries.length === 0) {
+      return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
+    }
+
+    const hasMore = entries.length > maxCount;
+    const sliced = hasMore ? entries.slice(0, maxCount) : entries;
+    const messages = sliced.map(([id, fields]) => this.deserialize(stream, id, fields));
+    const highWaterMark = messages[messages.length - 1].streamId ?? sinceStreamId;
+
+    return { messages, highWaterMark, hasMore };
   }
 
   /**

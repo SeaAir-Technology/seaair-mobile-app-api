@@ -111,8 +111,41 @@ router.post('/message', verifyJWT, async (req: Request, res: Response): Promise<
 });
 
 /**
+ * Per-request cap on the number of fw2mobile entries returned in the
+ * `?since=<streamId>` mode. Large enough that a mobile client polling every
+ * 5s won't fall behind under normal traffic (firmware heartbeat cadence is
+ * ~5s, plus occasional response messages); small enough that a misbehaving
+ * client with a very old checkpoint can't drag the route into multi-second
+ * payloads. When the cap is hit, the response carries `hasMore: true` so
+ * the client knows to re-poll immediately with the advanced checkpoint.
+ */
+const SINCE_MAX_COUNT = 50;
+
+/**
  * GET /mobile/status/:controllerId
- * Mobile reads latest controller heartbeat (XREVRANGE COUNT 1 with 11-min freshness window).
+ *
+ * Two modes, selected by the presence of the `since` query param:
+ *
+ *   1. Legacy single-latest (no `since`)
+ *      Returns `{ success, status: <single latest message or null> }`. Used
+ *      by clients that don't track stream-id checkpoints — including every
+ *      build released before this endpoint gained `?since` support. Reads
+ *      via the broker's `getControllerMessage` (XREVRANGE COUNT 1 on Redis;
+ *      single-slot lookup on the in-memory broker).
+ *
+ *   2. Since-checkpoint (`?since=<streamId>`)
+ *      Returns `{ success, statuses: [...], highWaterMark, hasMore }`
+ *      containing every fw2mobile entry with id strictly greater than the
+ *      caller's `since`, capped at SINCE_MAX_COUNT. Mobile uses this to
+ *      pick up command responses (admin-pin, wifi-config, …) that would
+ *      otherwise be buried under a newer heartbeat by the time the next
+ *      single-latest poll fires. The client persists `highWaterMark` in
+ *      memory and passes it back on the next poll; first-time/bootstrap
+ *      clients fall back to mode 1 to obtain an initial id.
+ *
+ * Backward compatibility: pre-`?since` clients never send the param and
+ * never see the new response shape — they continue to get the same
+ * single-latest payload they've always received.
  */
 router.get('/status/:controllerId', verifyJWT, async (req: Request, res: Response): Promise<void> => {
   const controllerId = parseInt(req.params.controllerId, 10);
@@ -137,7 +170,25 @@ router.get('/status/:controllerId', verifyJWT, async (req: Request, res: Respons
   req.app.locals.rateLimiter.recordRequest(authRateLimitKey);
   req.app.locals.rateLimiter.recordRequest(ipRateLimitKey);
 
+  const sinceParam = req.query.since;
+  const since = typeof sinceParam === 'string' && sinceParam.length > 0 ? sinceParam : null;
+
   try {
+    if (since !== null) {
+      const result = await req.app.locals.messageBroker.getControllerMessagesSince(
+        controllerId,
+        since,
+        SINCE_MAX_COUNT,
+      );
+      res.status(200).json({
+        success: true,
+        statuses: result.messages,
+        highWaterMark: result.highWaterMark,
+        hasMore: result.hasMore,
+      });
+      return;
+    }
+
     const message = await req.app.locals.messageBroker.getControllerMessage(controllerId);
     if (!message) {
       res.status(200).json({ success: true, status: null });

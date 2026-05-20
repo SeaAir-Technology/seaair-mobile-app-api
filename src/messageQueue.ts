@@ -8,7 +8,38 @@
  * - Messages expire after 11 minutes
  */
 
-import { IMessageBroker, Message, QueueStats } from './types';
+import { ControllerMessagesSinceResult, IMessageBroker, Message, QueueStats } from './types';
+
+/**
+ * Synthesize a Redis-Streams-style "<ms>-0" id from an ISO timestamp.
+ * The in-memory broker doesn't have real stream ids, but the route handler
+ * promises a consistent shape across brokers. We use the message's
+ * `timestamp` (the moment the firmware posted it) so comparisons against a
+ * client-supplied checkpoint still order chronologically — even if the
+ * client persisted a checkpoint while connected to the Redis broker and
+ * later falls through to the memory broker, "newer than" still means what
+ * the client expects.
+ */
+function synthIdFromTimestamp(ts: string): string {
+  const ms = Date.parse(ts);
+  return `${Number.isFinite(ms) ? ms : 0}-0`;
+}
+
+/**
+ * Compare two stream ids ("<ms>-<seq>"). Returns negative, zero, or positive
+ * the same way Array.sort comparators do. Tolerates malformed inputs by
+ * falling back to 0 — a malformed checkpoint just means "treat as oldest."
+ */
+function compareStreamIds(a: string, b: string): number {
+  const [ams, aseq] = a.split('-').map((s) => parseInt(s, 10));
+  const [bms, bseq] = b.split('-').map((s) => parseInt(s, 10));
+  const am = Number.isFinite(ams) ? ams : 0;
+  const bm = Number.isFinite(bms) ? bms : 0;
+  if (am !== bm) return am - bm;
+  const aq = Number.isFinite(aseq) ? aseq : 0;
+  const bq = Number.isFinite(bseq) ? bseq : 0;
+  return aq - bq;
+}
 
 export class MessageQueue implements IMessageBroker {
   private mobileAppQueue: Map<number, Message[]>;
@@ -64,6 +95,33 @@ export class MessageQueue implements IMessageBroker {
       return null;
     }
     return message;
+  }
+
+  async getControllerMessagesSince(
+    controllerId: number,
+    sinceStreamId: string,
+    _maxCount: number,
+  ): Promise<ControllerMessagesSinceResult> {
+    // The memory broker keeps a single slot per controller; previous
+    // messages are gone. Return the slot's current contents iff its
+    // synthesized id is newer than the caller's checkpoint.
+    const message = this.controllerQueue.get(controllerId);
+    if (!message) {
+      return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
+    }
+    if (message.expiresAt && Date.now() > message.expiresAt) {
+      this.controllerQueue.delete(controllerId);
+      return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
+    }
+    const synthId = synthIdFromTimestamp(message.timestamp);
+    if (compareStreamIds(synthId, sinceStreamId) <= 0) {
+      return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
+    }
+    // Stamp the synthesized id so the client's checkpoint advances. Cloning
+    // (rather than mutating the stored message) keeps the slot intact for
+    // future reads — the message stays until it expires or gets overwritten.
+    const stamped: Message = { ...message, streamId: synthId };
+    return { messages: [stamped], highWaterMark: synthId, hasMore: false };
   }
 
   private cleanupExpiredMessages(controllerId: number, queue: Message[]): void {

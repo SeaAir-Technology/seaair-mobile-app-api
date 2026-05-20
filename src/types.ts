@@ -75,6 +75,24 @@ export interface HealthDetailResponse {
 }
 
 /**
+ * Result returned by `getControllerMessagesSince`.
+ *
+ * `highWaterMark` is the stream id the caller should pass as `sinceStreamId`
+ * on the next poll. When `messages` is non-empty, it's the id of the LAST
+ * entry in the array. When `messages` is empty (nothing new since the
+ * caller's checkpoint), it's the caller's input id, unchanged — passing it
+ * back is still safe and idempotent.
+ *
+ * `hasMore` is true when the per-call cap was hit and the caller should
+ * re-poll immediately with the new `highWaterMark` to avoid falling behind.
+ */
+export interface ControllerMessagesSinceResult {
+  messages: Message[];
+  highWaterMark: string;
+  hasMore: boolean;
+}
+
+/**
  * Common interface implemented by both the legacy in-memory MessageQueue
  * and the Redis-backed RedisStreamQueue. Methods are async so callers can
  * transparently swap implementations via the MESSAGE_BROKER env var.
@@ -84,6 +102,16 @@ export interface IMessageBroker {
   addControllerMessage(controllerId: number, message: Message): Promise<void>;
   getMobileAppMessage(controllerId: number): Promise<Message | null>;
   getControllerMessage(controllerId: number): Promise<Message | null>;
+  // Returns controller-pushed messages with stream ids strictly greater than
+  // `sinceStreamId`, capped at `maxCount`. Mobile uses this to drain command
+  // responses (PIN, WiFi-config, …) that would otherwise be buried under a
+  // newer heartbeat by the time the single-latest `getControllerMessage` was
+  // called. See the route handler in `routes/mobile.ts` for the rationale.
+  getControllerMessagesSince(
+    controllerId: number,
+    sinceStreamId: string,
+    maxCount: number,
+  ): Promise<ControllerMessagesSinceResult>;
   getStats(): Promise<QueueStats>;
   getAllQueueContents(): Promise<{
     mobileAppQueue: Map<number, Message[]>;
