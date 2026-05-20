@@ -280,6 +280,36 @@ router.get('/devices/:controllerId/history', async (req: Request, res: Response)
   }
 });
 
+// ---- Devices: queue depth (unread counter for the dashboard badge) --------
+
+router.get('/devices/:controllerId/queue', async (req: Request, res: Response): Promise<void> => {
+  const broker = getRedisBroker(req);
+  if (!broker) {
+    brokerError(res);
+    return;
+  }
+  const controllerId = parseInt(req.params.controllerId, 10);
+  if (isNaN(controllerId) || controllerId <= 0) {
+    res.status(400).json({ error: 'controllerId must be a positive integer' });
+    return;
+  }
+  const directionParam = (req.query.direction as string) || 'mobile2fw';
+  if (directionParam !== 'mobile2fw' && directionParam !== 'fw2mobile') {
+    res.status(400).json({ error: 'direction must be mobile2fw or fw2mobile' });
+    return;
+  }
+  try {
+    const result = await broker.getQueueDepth(
+      controllerId,
+      directionParam as 'mobile2fw' | 'fw2mobile'
+    );
+    res.json(result);
+  } catch (err: any) {
+    console.error(`[Dashboard] /devices/:id/queue failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Devices: "Mark all received" ------------------------------------------
 
 router.post('/devices/:controllerId/mark-all-received', async (req: Request, res: Response): Promise<void> => {

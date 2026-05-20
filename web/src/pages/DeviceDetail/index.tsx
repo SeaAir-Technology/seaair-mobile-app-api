@@ -3,6 +3,7 @@ import { CurrentState } from './CurrentState';
 import { History } from './History';
 import { Analytics } from './Analytics';
 import { useMarkAllReceived } from '../../hooks/useDeviceMutations';
+import { useDeviceQueue } from '../../hooks/useDeviceQueue';
 import type { PayloadFilter } from '../../lib/types';
 
 type Tab = 'state' | 'history' | 'analytics';
@@ -24,7 +25,10 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
               #{controllerId}
             </div>
           </div>
-          <MarkAllReceivedButton controllerId={controllerId} />
+          <div className="flex flex-col items-end gap-2">
+            <QueueBadge controllerId={controllerId} />
+            <MarkAllReceivedButton controllerId={controllerId} />
+          </div>
         </div>
         <div className="flex gap-1">
           {(['state', 'history', 'analytics'] as Tab[]).map((t) => (
@@ -54,6 +58,54 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
         {tab === 'analytics' && <Analytics controllerId={controllerId} />}
       </div>
     </div>
+  );
+}
+
+// Live counter of how many mobile→firmware commands are sitting in this
+// controller's Redis stream past the consumer group's last-delivered-id.
+// Polls every 2s via useDeviceQueue so the user can watch it tick down as
+// the firmware drains the queue (or jump to zero after Mark All Received).
+function QueueBadge({ controllerId }: { controllerId: number }): JSX.Element {
+  const { data, isLoading, error } = useDeviceQueue(controllerId);
+
+  if (error) {
+    return (
+      <span
+        className="text-[11px] text-red-600 whitespace-nowrap"
+        role="alert"
+        title={(error as Error).message}
+      >
+        queue unavailable
+      </span>
+    );
+  }
+
+  const unread = data?.unread ?? 0;
+  const pending = data?.pending ?? 0;
+  const total = unread + pending;
+  const hasMessages = total > 0;
+
+  const title =
+    pending > 0
+      ? `${unread} undelivered + ${pending} delivered-but-unacked in the mobile→firmware queue`
+      : 'Messages queued for the firmware to fetch. Updates every 2s.';
+
+  return (
+    <span
+      className={`text-xs px-2.5 py-1 rounded border whitespace-nowrap inline-flex items-center gap-1.5 ${
+        hasMessages
+          ? 'bg-amber-50 border-amber-300 text-amber-900'
+          : 'bg-ink-50 border-ink-200 text-ink-600'
+      }`}
+      title={title}
+      aria-label={`${total} unread queued message${total === 1 ? '' : 's'}`}
+    >
+      <span className="font-mono font-medium tabular-nums">
+        {isLoading ? '…' : total}
+      </span>
+      <span>unread</span>
+      {data?.capped && <span className="text-[10px] opacity-70">(10k+)</span>}
+    </span>
   );
 }
 

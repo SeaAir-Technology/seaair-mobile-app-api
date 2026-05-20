@@ -54,6 +54,15 @@ export interface MarkAllReceivedResult {
   streamLength: number;       // total stream length after the operation
 }
 
+export interface QueueDepthResult {
+  controllerId: number;
+  direction: Direction;
+  unread: number;             // entries strictly after last-delivered-id
+  pending: number;            // PEL: delivered but not yet acknowledged
+  streamLength: number;       // total stream length
+  capped?: boolean;           // true when the XRANGE fallback hit its cap
+}
+
 function streamKey(direction: Direction, controllerId: number): string {
   return `stream:${direction}:${controllerId}`;
 }
@@ -298,6 +307,73 @@ export class RedisStreamQueue implements IMessageBroker {
       cursorAdvancedTo,
       streamLength,
     };
+  }
+
+  /**
+   * Count how many messages are sitting in a controller's queue waiting to
+   * be drained by the firmware consumer group. Backs the unread-counter
+   * badge on the dashboard's controller detail page.
+   *
+   * "unread" = stream entries strictly newer than the consumer group's
+   * last-delivered-id. Redis 7.0+ exposes this directly as the `lag` field
+   * on XINFO GROUPS, which is O(1). For older Redis we fall back to an
+   * XRANGE walk with a 10k cap so a runaway queue can't pin the server.
+   *
+   * "pending" = entries delivered via XREADGROUP but not yet XACK'd. Under
+   * the current XREADGROUP+XACK pattern this is normally zero, but a crash
+   * between read and ack can leave entries in the PEL — surfacing the
+   * number keeps that case visible rather than silent.
+   */
+  async getQueueDepth(
+    controllerId: number,
+    direction: Direction = 'mobile2fw'
+  ): Promise<QueueDepthResult> {
+    const stream = streamKey(direction, controllerId);
+    await this.ensureConsumerGroup(stream, FW_GROUP);
+
+    const groupsRaw = (await this.redis.xinfo('GROUPS', stream)) as any[];
+    let lag: number | null = null;
+    let pending = 0;
+    let lastDeliveredId = '0-0';
+    if (Array.isArray(groupsRaw)) {
+      for (const g of groupsRaw) {
+        if (!Array.isArray(g)) continue;
+        const obj: Record<string, any> = {};
+        for (let i = 0; i < g.length; i += 2) obj[g[i]] = g[i + 1];
+        if (obj.name !== FW_GROUP) continue;
+        lastDeliveredId = String(obj['last-delivered-id'] || '0-0');
+        const pendingVal = obj['pending'];
+        pending =
+          typeof pendingVal === 'number'
+            ? pendingVal
+            : typeof pendingVal === 'string' && /^\d+$/.test(pendingVal)
+            ? parseInt(pendingVal, 10)
+            : 0;
+        const lagVal = obj['lag'];
+        if (typeof lagVal === 'number' && Number.isFinite(lagVal)) {
+          lag = lagVal;
+        } else if (typeof lagVal === 'string' && /^\d+$/.test(lagVal)) {
+          lag = parseInt(lagVal, 10);
+        }
+        break;
+      }
+    }
+
+    const streamLength = await this.redis.xlen(stream);
+
+    if (lag !== null) {
+      return { controllerId, direction, unread: lag, pending, streamLength };
+    }
+
+    const cap = 10000;
+    const entries = await this.redis.xrange(
+      stream, `(${lastDeliveredId}`, '+', 'COUNT', cap + 1
+    );
+    const count = Array.isArray(entries) ? entries.length : 0;
+    if (count > cap) {
+      return { controllerId, direction, unread: cap, pending, streamLength, capped: true };
+    }
+    return { controllerId, direction, unread: count, pending, streamLength };
   }
 
   async ping(): Promise<boolean> {

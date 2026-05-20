@@ -108,6 +108,15 @@ export interface DeviceAnalyticsResponse {
   seriesNames: string[];
 }
 
+export interface DeviceQueueResponse {
+  controllerId: number;
+  direction: 'fw2mobile' | 'mobile2fw';
+  unread: number;
+  pending: number;
+  streamLength: number;
+  capped?: boolean;
+}
+
 export interface MarkAllReceivedResponse {
   controllerId: number;
   direction: 'fw2mobile' | 'mobile2fw';

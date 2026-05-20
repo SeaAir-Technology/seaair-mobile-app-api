@@ -23,6 +23,7 @@ export function useMarkAllReceived() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['device-list'] });
       qc.invalidateQueries({ queryKey: ['device-state'] });
+      qc.invalidateQueries({ queryKey: ['device-queue'] });
       qc.invalidateQueries({ queryKey: ['device-history'] });
       qc.invalidateQueries({ queryKey: ['firehose'] });
     },
