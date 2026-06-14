@@ -8,7 +8,7 @@ import {
   evaluateFilters,
   DecodedPayload,
 } from '../../src/services/protoDecoder';
-import { hvacHeartbeat, utilityHeartbeat, namelessHeartbeat } from '../helpers/proto';
+import { hvacHeartbeat, utilityHeartbeat, namelessHeartbeat, wrappedHvacHeartbeat } from '../helpers/proto';
 
 function decoded(data: Record<string, unknown>): DecodedPayload {
   return { typeName: 'Test', data };
@@ -51,6 +51,16 @@ describe('extractDeviceName', () => {
   it('prefers the hvac path over a generic top-level name', () => {
     expect(extractDeviceName(decoded({ hvac: { config: { name: 'Specific' } }, name: 'Generic' }))).toBe('Specific');
   });
+
+  it('finds a name nested under a BLE.Msg wrapper (real heartbeat shape)', () => {
+    // The shape that regressed in production: name buried two wrappers deep.
+    expect(
+      extractDeviceName(decoded({ syncDevice2Controller: { hvac: { config: { name: 'Test' } } } })),
+    ).toBe('Test');
+    expect(
+      extractDeviceName(decoded({ deviceInfoResponse: { utility: { config: { name: 'Bilge' } } } })),
+    ).toBe('Bilge');
+  });
 });
 
 describe('decodePayload (end-to-end with real protos)', () => {
@@ -63,6 +73,12 @@ describe('decodePayload (end-to-end with real protos)', () => {
   it('decodes a Utility heartbeat and surfaces its name', () => {
     const result = decodePayload(utilityHeartbeat('Bilge Sensor'));
     expect(extractDeviceName(result)).toBe('Bilge Sensor');
+  });
+
+  it('decodes a wire-realistic BLE.Msg-wrapped heartbeat and surfaces its name', () => {
+    const result = decodePayload(wrappedHvacHeartbeat('Salon HVAC'));
+    expect(result?.typeName).toBe('BLE.Msg');
+    expect(extractDeviceName(result)).toBe('Salon HVAC');
   });
 
   it('decodes a nameless heartbeat with no name', () => {

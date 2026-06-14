@@ -22,7 +22,7 @@ vi.mock('../../src/services/beacons', () => ({
 
 import { createApp } from '../../src/app';
 import { RateLimiter } from '../../src/rateLimiter';
-import { hvacHeartbeat, utilityHeartbeat, namelessHeartbeat } from '../helpers/proto';
+import { hvacHeartbeat, utilityHeartbeat, namelessHeartbeat, wrappedHvacHeartbeat } from '../helpers/proto';
 
 // Minimal stand-in for RedisStreamQueue exposing only what /devices calls.
 // Each controller maps to its latest heartbeat payload and an age (ms ago).
@@ -60,7 +60,8 @@ describe('GET /dashboard/api/devices', () => {
 
   function mountDevices() {
     app.locals.messageBroker = fakeBroker({
-      101: { payload: hvacHeartbeat('Cabin Air'), ageMs: 1_000 },
+      // 101 uses the wire-realistic BLE.Msg-wrapped shape; 202 a bare type.
+      101: { payload: wrappedHvacHeartbeat('Cabin Air'), ageMs: 1_000 },
       202: { payload: utilityHeartbeat('Bilge Sensor'), ageMs: 2_000 },
       303: { payload: hvacHeartbeat('Old Device'), ageMs: 5 * MIN },
       404: { payload: namelessHeartbeat(), ageMs: 3_000 },
