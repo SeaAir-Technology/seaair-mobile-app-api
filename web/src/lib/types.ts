@@ -52,6 +52,8 @@ export interface FirehoseResponse {
 
 export interface DeviceSummary {
   controllerId: number;
+  /** Human-readable name from the latest heartbeat config, if the device set one. */
+  name?: string;
   lastSeenAt: string;
   ageMs: number;
   alive: boolean;

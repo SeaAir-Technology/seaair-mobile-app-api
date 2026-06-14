@@ -22,6 +22,7 @@ import { Message, IMessageBroker } from '../types';
 import { getBrokerType } from '../messageBroker';
 import {
   decodePayload,
+  extractDeviceName,
   parseFilterParam,
   evaluateFilters,
   PayloadFilter,
@@ -128,7 +129,7 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
       activeBeaconsResult.beacons.map((b) => b.controllerId)
     );
 
-    type Lookup = { controllerId: number; lastSeenMs: number };
+    type Lookup = { controllerId: number; lastSeenMs: number; name?: string };
     const lookups = await Promise.all(
       fw2mobileKeys.map(async (key): Promise<Lookup | null> => {
         const idStr = key.split(':')[2];
@@ -139,15 +140,17 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
         const msg = history[0];
         const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
         if (tsMs < cutoff) return null;
-        return { controllerId, lastSeenMs: tsMs };
+        const name = extractDeviceName(decodePayload(msg.protobufPayload));
+        return { controllerId, lastSeenMs: tsMs, name };
       })
     );
 
     const now = Date.now();
     const devices = lookups
       .filter((x): x is Lookup => x !== null)
-      .map(({ controllerId, lastSeenMs }) => ({
+      .map(({ controllerId, lastSeenMs, name }) => ({
         controllerId,
+        name,
         lastSeenAt: new Date(lastSeenMs).toISOString(),
         ageMs: now - lastSeenMs,
         alive: now - lastSeenMs <= FRESHNESS_MS,

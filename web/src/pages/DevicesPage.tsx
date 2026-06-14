@@ -212,8 +212,17 @@ function DeviceRow({
               Beacon raised
             </span>
           )}
-          <span className="font-mono text-sm truncate">
-            Controller #{device.controllerId}
+          <span className="text-sm truncate">
+            {device.name ? (
+              <>
+                {device.name}{' '}
+                <span className="font-mono text-ink-400">
+                  (#{device.controllerId})
+                </span>
+              </>
+            ) : (
+              <span className="font-mono">Controller #{device.controllerId}</span>
+            )}
           </span>
           <span
             className="ml-auto text-xs text-ink-500 shrink-0"

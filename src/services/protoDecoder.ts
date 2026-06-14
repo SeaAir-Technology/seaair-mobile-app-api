@@ -104,6 +104,31 @@ function scoreDecoded(obj: any): number {
   return score;
 }
 
+/**
+ * Pull a human-readable device name out of a decoded heartbeat, if present.
+ *
+ * The name lives on the device config regardless of device type. Depending on
+ * which message type best-matched during decode, the config can sit at a few
+ * different depths (a oneof wrapper like SyncDevice2Controller nests it under
+ * hvac/utility, while a bare Hvac/Utility decodes with config at the root).
+ * We probe the known paths and return the first non-empty string.
+ */
+const DEVICE_NAME_PATHS = [
+  'hvac.config.name',
+  'utility.config.name',
+  'config.name',
+  'name',
+];
+
+export function extractDeviceName(decoded: DecodedPayload | null): string | undefined {
+  if (!decoded) return undefined;
+  for (const p of DEVICE_NAME_PATHS) {
+    const v = getByPath(decoded.data, p);
+    if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  }
+  return undefined;
+}
+
 export type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'exists';
 
 export interface PayloadFilter {
