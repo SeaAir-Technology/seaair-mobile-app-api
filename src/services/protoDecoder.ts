@@ -107,25 +107,37 @@ function scoreDecoded(obj: any): number {
 /**
  * Pull a human-readable device name out of a decoded heartbeat, if present.
  *
- * The name lives on the device config regardless of device type. Depending on
- * which message type best-matched during decode, the config can sit at a few
- * different depths (a oneof wrapper like SyncDevice2Controller nests it under
- * hvac/utility, while a bare Hvac/Utility decodes with config at the root).
- * We probe the known paths and return the first non-empty string.
+ * The name lives on the device config (HvacConfig.name / UtilityConfig.name),
+ * but how deeply it nests depends on which message type best-matched during
+ * decode. Real firmware heartbeats decode as a BLE.Msg wrapper, so the config
+ * sits at e.g. `syncDevice2Controller.hvac.config.name`; a bare Hvac/Utility
+ * decodes with `config.name` at the root. Rather than enumerate every wrapper
+ * field, we walk the tree for the first object carrying a `config.name`. This
+ * is precise because `name` only appears on HvacConfig/UtilityConfig in the
+ * schema. We fall back to a top-level `name` for a bare HvacConfig decode.
  */
-const DEVICE_NAME_PATHS = [
-  'hvac.config.name',
-  'utility.config.name',
-  'config.name',
-  'name',
-];
+function findConfigName(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || value === null || typeof value !== 'object') return undefined;
+  const cfg = (value as Record<string, any>).config;
+  if (cfg && typeof cfg === 'object' && typeof cfg.name === 'string' && cfg.name.trim() !== '') {
+    return cfg.name.trim();
+  }
+  for (const v of Object.values(value as Record<string, unknown>)) {
+    if (v && typeof v === 'object') {
+      const found = findConfigName(v, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
 
 export function extractDeviceName(decoded: DecodedPayload | null): string | undefined {
   if (!decoded) return undefined;
-  for (const p of DEVICE_NAME_PATHS) {
-    const v = getByPath(decoded.data, p);
-    if (typeof v === 'string' && v.trim() !== '') return v.trim();
-  }
+  const fromConfig = findConfigName(decoded.data);
+  if (fromConfig) return fromConfig;
+  // Bare HvacConfig/UtilityConfig decode: name sits at the root.
+  const top = (decoded.data as Record<string, any>)?.name;
+  if (typeof top === 'string' && top.trim() !== '') return top.trim();
   return undefined;
 }
 
