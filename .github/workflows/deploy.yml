@@ -20,7 +20,26 @@ env:
   VITE_COGNITO_REDIRECT_URI: https://dashboard.seaair.com/
   VITE_COGNITO_LOGOUT_URI: https://dashboard.seaair.com/
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      # Backend: compile (catches type/build errors) then run the test suite.
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      # Frontend: typecheck + production build (catches SPA type/build errors).
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

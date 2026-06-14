@@ -14,6 +14,23 @@ dist/
 build/
 *.tsbuildinfo
 
+# Compiled output must live in dist/ — never commit JS next to TS sources.
+# (web/ keeps legitimate .js config files, so it's excluded from this rule.)
+/server.js
+/test.js
+/src/**/*.js
+/src/**/*.d.ts
+/src/**/*.js.map
+
+# Web: `tsc -b` (typecheck step of the build) emits JS/types next to the TSX
+# sources locally. Vite produces the real bundle in web/dist; these emitted
+# siblings are throwaway and must never be committed.
+/web/src/**/*.js
+/web/src/**/*.d.ts
+/web/src/**/*.js.map
+/web/vite.config.js
+/web/vite.config.d.ts
+
 # IDE
 .vscode/
 .idea/
