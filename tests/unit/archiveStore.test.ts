@@ -251,3 +251,21 @@ describe('ArchiveStore.query — bucketing', () => {
     expect(tempAgg.avg).toBe(75);
   });
 });
+
+describe('ArchiveStore.getRange', () => {
+  it('reads newest-first with a limit and returns items chronologically', async () => {
+    // DynamoDB returns these descending (ScanIndexForward false).
+    const descending = [
+      { controllerId: '1', ts: 3000, payloadRaw: 'c' },
+      { controllerId: '1', ts: 2000, payloadRaw: 'b' },
+      { controllerId: '1', ts: 1000, payloadRaw: 'a' },
+    ];
+    const doc = fakeDoc({ QueryCommand: () => ({ Items: descending }) });
+    const out = await new ArchiveStore(doc).getRange(1, 0, 9999, 100);
+
+    expect(out.map((i: any) => i.ts)).toEqual([1000, 2000, 3000]); // reversed to ascending
+    const q = doc.sends.find((c: any) => c.constructor.name === 'QueryCommand');
+    expect(q.input.ScanIndexForward).toBe(false);
+    expect(q.input.Limit).toBe(100);
+  });
+});

@@ -41,11 +41,16 @@ import {
   revokeDashboardAccess,
   getUserBySub,
 } from '../services/dashboardAdmin';
+import { archiveEnabled, getArchiveStore, ArchiveStore } from '../services/archiveStore';
 
 const router = express.Router();
 
 const FRESHNESS_MS = 11 * 60 * 1000;
 const ACTIVE_BEACONS_FETCH_LIMIT = 200;
+// Most-recent window served live from Redis in the analytics view, with older
+// history coming from the durable archive. Keeps the live edge real-time and
+// immune to archive write lag / change-point compression.
+const ANALYTICS_LIVE_EDGE_MS = 5 * 60 * 1000;
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -347,7 +352,13 @@ router.post('/devices/:controllerId/mark-all-received', async (req: Request, res
   }
 });
 
-// ---- Devices: analytics (skeleton) -----------------------------------------
+// ---- Devices: analytics -----------------------------------------------------
+//
+// Charts numeric telemetry over a window. Prefers the durable Tier-2 archive
+// (days of history, change-point compressed) and only falls back to sampling
+// the short Redis live window when archiving is disabled. Either way we decode
+// each payload and emit the same {path: [{t,v}]} series shape the dashboard
+// expects, so the data source is transparent to the frontend.
 
 router.get('/devices/:controllerId/analytics', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -361,31 +372,61 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
     return;
   }
   const windowMs = parseWindow((req.query.window as string) || '24h');
-  const cutoff = Date.now() - windowMs;
+  const now = Date.now();
+  const cutoff = now - windowMs;
   const sampleCap = 5000;
 
   try {
-    const history = await broker.getStreamHistory(controllerId, 'fw2mobile', sampleCap);
     const series: Record<string, Array<{ t: number; v: number }>> = {};
     let scanned = 0;
+    let source: 'archive+live' | 'live' = 'live';
 
-    for (const msg of history) {
-      const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
-      if (tsMs < cutoff) break;
+    const decodeInto = (payload: string, t: number): void => {
+      const decoded = decodePayload(payload);
+      if (!decoded) return;
       scanned++;
-      const decoded = decodePayload(msg.protobufPayload);
-      if (!decoded) continue;
       walkNumericFields(decoded.data, '', (path, value) => {
-        if (!series[path]) series[path] = [];
-        series[path].push({ t: tsMs, v: value });
+        (series[path] ??= []).push({ t, v: value });
       });
+    };
+
+    const archive = (req.app.locals.archiveStore as ArchiveStore | undefined) ?? getArchiveStore();
+    const liveEdge = now - ANALYTICS_LIVE_EDGE_MS;
+
+    if (archiveEnabled() && typeof archive.getRange === 'function') {
+      // Hybrid read: deep history from the durable archive for everything older
+      // than the live edge, then the recent window straight from Redis. The
+      // live edge is real-time and immune to archive write lag / change-point
+      // compression. Archive covers [cutoff, liveEdge); Redis covers [liveEdge, now].
+      source = 'archive+live';
+      if (cutoff < liveEdge) {
+        const items = await archive.getRange(controllerId, cutoff, liveEdge - 1, sampleCap);
+        for (const item of items) {
+          // Value reflects lastTs (latest-wins); cap at the live edge so an
+          // archived run spanning the boundary doesn't overlap the live window.
+          decodeInto(item.payloadRaw, Math.min(item.lastTs ?? item.ts, liveEdge - 1));
+        }
+      }
     }
 
-    for (const k of Object.keys(series)) series[k].reverse();
+    // Recent live-edge window from Redis (or the whole window when archiving is off).
+    const liveCut = source === 'archive+live' ? Math.max(cutoff, liveEdge) : cutoff;
+    if (typeof broker.getStreamHistory === 'function') {
+      const history = await broker.getStreamHistory(controllerId, 'fw2mobile', sampleCap);
+      for (const msg of history) {
+        const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
+        if (tsMs < liveCut) break; // newest-first: stop once past the cut
+        decodeInto(msg.protobufPayload, tsMs);
+      }
+    }
+
+    // Archive points were appended ascending, live points descending — sort each.
+    for (const k of Object.keys(series)) series[k].sort((a, b) => a.t - b.t);
 
     res.json({
       controllerId,
       windowMs,
+      source,
       scanned,
       series,
       seriesNames: Object.keys(series).sort(),
