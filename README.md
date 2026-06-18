@@ -332,6 +332,21 @@ The JWT token will contain:
 - `AWS_ACCESS_KEY_ID`: AWS Access Key ID for DynamoDB access (optional - recommended to use IAM roles in production)
 - `AWS_SECRET_ACCESS_KEY`: AWS Secret Access Key for DynamoDB access (optional - recommended to use IAM roles in production)
 
+### Tiered retention & analytics archive
+
+The broker is OOM-bounded by a small Redis live window, with full history in a
+durable DynamoDB archive (feature-flagged, off by default). See
+[docs/tiered-retention.md](docs/tiered-retention.md) for the full design,
+infrastructure setup, and rollout/rollback runbook.
+
+- `STREAM_LIVE_MAXLEN`: Tier-1 per-controller live window (count, default 5000; falls back to `STREAM_MAXLEN`)
+- `ARCHIVE_ENABLED`: master toggle for Tier-2 archiving (default `false`)
+- `ARCHIVE_STORE`: backing store, `dynamodb` (only option implemented)
+- `ARCHIVE_RETENTION_DAYS`: history window in days (default 4, max 7)
+- `DDB_HISTORY_TABLE`: archive table name (default `controller-history`)
+- `ARCHIVE_GAP_SECONDS`: gap before an unchanged heartbeat is logged as comms-resume (default 60)
+- `ANALYTICS_MAX_RAW_POINTS`: cap that forces analytics resolution escalation (default 5000)
+
 ## DynamoDB Configuration
 
 The API uses AWS DynamoDB to store durable user-device associations. The table structure is:
