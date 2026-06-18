@@ -99,10 +99,14 @@ describe('fingerprint', () => {
     expect(fingerprint(a)).not.toBe(fingerprint(c));
   });
 
-  it('ignores powerRate/powerTotal so power-only changes share a fingerprint', () => {
-    const a = extractTelemetry(decodePayload(hvacWithPower(60, 100)))!;
-    const b = extractTelemetry(decodePayload(hvacWithPower(75, 250)))!;
-    expect(fingerprint(a)).toBe(fingerprint(b));
+  it('ignores the powerTotal accumulator but treats powerRate as a real change', () => {
+    const base = extractTelemetry(decodePayload(hvacWithPower(67.5, 100)))!;
+    // Same powerRate, higher accumulator -> same fingerprint (deduped).
+    const accumulated = extractTelemetry(decodePayload(hvacWithPower(67.5, 250)))!;
+    expect(fingerprint(base)).toBe(fingerprint(accumulated));
+    // Different powerRate -> different fingerprint (a settings change).
+    const rateChanged = extractTelemetry(decodePayload(hvacWithPower(80, 250)))!;
+    expect(fingerprint(base)).not.toBe(fingerprint(rateChanged));
   });
 });
 
@@ -193,19 +197,25 @@ describe('ArchiveStore.write — change-based dedup (FR-6)', () => {
     expect(update.input.Key.ts).toBe(1_781_000_000_000);
   });
 
-  it('power-only movement is a duplicate (one Put, one Update) carrying the latest power', async () => {
+  it('powerTotal-only movement is a duplicate (one Put, one Update) carrying the latest total', async () => {
     const doc = fakeDoc({ QueryCommand: () => ({ Items: [] }) });
     const store = new ArchiveStore(doc);
-    await store.write(input({ ts: 1_781_000_000_000, payloadRaw: hvacWithPower(60, 100) }));
-    await store.write(input({ ts: 1_781_000_005_000, payloadRaw: hvacWithPower(75, 250) }));
+    await store.write(input({ ts: 1_781_000_000_000, payloadRaw: hvacWithPower(67.5, 100) }));
+    await store.write(input({ ts: 1_781_000_005_000, payloadRaw: hvacWithPower(67.5, 250) }));
 
     const puts = doc.sends.filter((c: any) => c.constructor.name === 'PutCommand');
     const updates = doc.sends.filter((c: any) => c.constructor.name === 'UpdateCommand');
-    expect(puts).toHaveLength(1); // power change alone did NOT spawn a new row
+    expect(puts).toHaveLength(1); // accumulator climbing alone did NOT spawn a new row
     expect(updates).toHaveLength(1);
-    // ...and the retained row now carries the newest power values.
-    expect(updates[0].input.ExpressionAttributeValues[':m'].powerTotal).toBe(250);
-    expect(updates[0].input.ExpressionAttributeValues[':m'].powerRate).toBe(75);
+    expect(updates[0].input.ExpressionAttributeValues[':m'].powerTotal).toBe(250); // latest total retained
+  });
+
+  it('a powerRate change DOES create a new change-point (machine settings changed)', async () => {
+    const doc = fakeDoc({ QueryCommand: () => ({ Items: [] }) });
+    const store = new ArchiveStore(doc);
+    await store.write(input({ ts: 1_781_000_000_000, payloadRaw: hvacWithPower(67.5, 100) }));
+    await store.write(input({ ts: 1_781_000_005_000, payloadRaw: hvacWithPower(80, 110) }));
+    expect(doc.sends.filter((c: any) => c.constructor.name === 'PutCommand')).toHaveLength(2);
   });
 });
 

@@ -29,11 +29,13 @@ these sparse points back into time buckets (`raw|1m|5m|1h`, avg/min/max). A
 intentionally **no separate rollup table** — change-point storage already does
 that job, and aggregation happens app-side at query time.
 
-Continuously-moving power measures (`powerRate`, and the monotonic accumulator
-`powerTotal`) are **excluded from change-detection** (`FINGERPRINT_EXCLUDED_MEASURES`
-in `archiveStore.ts`): otherwise a running machine would emit a new change-point
-on nearly every heartbeat. They are still stored on every retained point and,
-via latest-wins, always reflect the most recent reading.
+The monotonic accumulator `powerTotal` is **excluded from change-detection**
+(`FINGERPRINT_EXCLUDED_MEASURES` in `archiveStore.ts`): it climbs on essentially
+every heartbeat, so including it would emit a new change-point continuously on a
+running machine. It is still stored on every retained point and, via latest-wins,
+always reflects the most recent reading. `powerRate` is **not** excluded — a
+change in power rate reflects a real machine-settings change and should create a
+new change-point.
 
 > Consequence: the reconnect fallback (FR-7) replays distinct *state changes*
 > in the gap, not every redundant 5s heartbeat — less data, same information.

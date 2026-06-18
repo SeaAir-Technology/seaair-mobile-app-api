@@ -195,14 +195,18 @@ export function extractTelemetry(decoded: DecodedPayload | null): Telemetry | nu
 
 /**
  * Measures intentionally excluded from change-detection. `powerTotal` is a
- * monotonic accumulator and `powerRate` drifts continuously, so including
- * either would force a brand-new change-point on nearly every heartbeat of a
- * running machine — defeating compression. They are still stored on every
- * retained point and, via latest-wins on duplicates, always reflect the most
- * recent reading at `lastTs`. (`budgetSecondsSinceReset` is another monotonic
- * counter that could be added here if firmware starts emitting it.)
+ * monotonic accumulator that climbs on essentially every heartbeat, so
+ * including it would force a brand-new change-point continuously on a running
+ * machine — defeating compression. It is still stored on every retained point
+ * and, via latest-wins on duplicates, always reflects the most recent reading
+ * at `lastTs`.
+ *
+ * NOTE: `powerRate` is deliberately NOT excluded — a change in power rate
+ * reflects a real change in the machine's settings/operation and SHOULD create
+ * a new change-point. (`budgetSecondsSinceReset` is another monotonic counter
+ * that could be added here if firmware starts emitting it.)
  */
-const FINGERPRINT_EXCLUDED_MEASURES = new Set(['powerRate', 'powerTotal']);
+const FINGERPRINT_EXCLUDED_MEASURES = new Set(['powerTotal']);
 
 /**
  * Deterministic fingerprint of a telemetry reading for change-detection.
