@@ -23,8 +23,10 @@ import adminRoutes from './routes/admin';
 import beaconRoutes from './routes/beacon';
 import consentRoutes from './routes/consent';
 import dashboardRoutes from './routes/dashboard';
+import analyticsRoutes from './routes/analytics';
 import { requireDashboardAdmin } from './middleware/requireDashboardAdmin';
 import { isCognitoConfigured, COGNITO_USER_POOL_ID, AWS_REGION } from './auth';
+import { archiveConfig } from './services/archiveStore';
 import { HealthDetailResponse, QueueContents, IMessageBroker } from './types';
 
 export function createApp(): Application {
@@ -51,6 +53,10 @@ export function createApp(): Application {
   // Same App Runner service as the SPA below, so requests from the SPA are
   // same-origin even when the SPA is reached via a different custom domain
   // (App Runner doesn't host-discriminate by default).
+  //
+  // Analytics (Tier-2 archive history) mounts first under the same gate so its
+  // specific prefix wins before the general dashboard router.
+  app.use('/dashboard/api/analytics', requireDashboardAdmin, analyticsRoutes);
   app.use('/dashboard/api', requireDashboardAdmin, dashboardRoutes);
 
   // Dashboard SPA. Served at the host root so users on dashboard.seaair.com see
@@ -143,6 +149,7 @@ export function createApp(): Application {
         type: getBrokerType(),
         connected: await broker.ping().catch(() => false),
       },
+      archive: archiveConfig(),
     };
     res.status(200).json(response);
   });

@@ -72,6 +72,12 @@ export interface HealthDetailResponse {
     connected: boolean;
     info?: any;
   };
+  archive?: {
+    enabled: boolean;
+    store: string;
+    table: string;
+    retentionDays: number;
+  };
 }
 
 /**

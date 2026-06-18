@@ -27,6 +27,27 @@
 
 import { Redis } from 'ioredis';
 import { ControllerMessagesSinceResult, IMessageBroker, Message, QueueStats } from './types';
+import { archiveEnabled } from './services/archiveStore';
+import type { ArchiveWriteInput, ArchivedItem } from './services/archiveStore';
+
+/**
+ * Tier-2 archive sink used by the broker. Write powers heartbeat archiving on
+ * the ingest path; getSince powers the reconnect fallback (FR-7) when a mobile
+ * client's checkpoint predates the trimmed Redis live window. Kept as a narrow
+ * interface so the broker stays decoupled and testable.
+ */
+export interface ArchiveWriter {
+  write(input: ArchiveWriteInput): Promise<void>;
+  getSince?(controllerId: number, sinceTs: number, limit: number): Promise<ArchivedItem[]>;
+}
+
+/** Numeric compare of two `ms-seq` Redis stream ids. */
+function compareStreamIds(a: string, b: string): number {
+  const [am, as_] = a.split('-').map((n) => parseInt(n, 10));
+  const [bm, bs_] = b.split('-').map((n) => parseInt(n, 10));
+  if (am !== bm) return am - bm;
+  return (as_ || 0) - (bs_ || 0);
+}
 
 const FRESHNESS_WINDOW_MS = 11 * 60 * 1000;
 const FW_GROUP = 'fw';
@@ -75,10 +96,31 @@ export class RedisStreamQueue implements IMessageBroker {
   private redis: Redis;
   private maxLen: number;
   private groupsEnsured: Set<string> = new Set();
+  private archive?: ArchiveWriter;
 
-  constructor(redis: Redis) {
+  constructor(redis: Redis, archive?: ArchiveWriter) {
     this.redis = redis;
-    this.maxLen = parseInt(process.env.STREAM_MAXLEN || '1000000', 10);
+    this.maxLen = RedisStreamQueue.resolveLiveMaxLen();
+    this.archive = archive;
+  }
+
+  /**
+   * Resolve the per-controller live-window trim count (Tier 1).
+   *
+   * `STREAM_LIVE_MAXLEN` is the live-window count — small by design so Redis
+   * memory is a hard function of (controllers x live-window), not of total
+   * history (durable history lives in the Tier-2 archive). We fall back to the
+   * legacy `STREAM_MAXLEN` if the new var is unset so an existing deployment
+   * keeps its configured bound until it's migrated, and to 5000 (~7h @ 5s,
+   * ~1.5 MB/controller) if neither is set. Trimming stays `MAXLEN ~ <n>` on
+   * every per-controller XADD; that approximate trim is the OOM backstop and
+   * must not be replaced by MINID alone (a runaway device could outrun a
+   * time-based bound).
+   */
+  static resolveLiveMaxLen(): number {
+    const raw = process.env.STREAM_LIVE_MAXLEN ?? process.env.STREAM_MAXLEN ?? '5000';
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;
   }
 
   private serialize(message: Message): string[] {
@@ -170,6 +212,29 @@ export class RedisStreamQueue implements IMessageBroker {
     const id = await this.redis.xadd(stream, 'MAXLEN', '~', this.maxLen, '*', ...fields);
     console.log(`[RedisBroker] XADD ${stream} -> ${id} (controller ${controllerId})`);
     await this.writeFirehose('fw2mobile', controllerId, id || '', message);
+    this.archiveHeartbeat(controllerId, id || '', message);
+  }
+
+  /**
+   * Fire-and-forget Tier-2 archive write (FR-3). Deliberately NOT awaited: the
+   * heartbeat response must not wait on DynamoDB, and an archive failure must
+   * never fail device delivery. The store no-ops when ARCHIVE_ENABLED is off.
+   */
+  private archiveHeartbeat(controllerId: number, streamId: string, message: Message): void {
+    if (!this.archive) return;
+    const tsMs = Date.parse(message.timestamp);
+    void this.archive
+      .write({
+        controllerId,
+        ts: Number.isFinite(tsMs) ? tsMs : Date.now(),
+        streamId,
+        senderType: message.sender.type,
+        senderIp: message.sender.ip,
+        payloadRaw: message.protobufPayload,
+      })
+      .catch((err: any) => {
+        console.warn(`[RedisBroker] archive write rejected (non-fatal): ${err?.message ?? err}`);
+      });
   }
 
   async getMobileAppMessage(controllerId: number): Promise<Message | null> {
@@ -244,16 +309,77 @@ export class RedisStreamQueue implements IMessageBroker {
       return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
     }
 
-    if (!entries || entries.length === 0) {
+    const redisHasMore = entries.length > maxCount;
+    const redisSliced = redisHasMore ? entries.slice(0, maxCount) : entries;
+    const redisMessages = redisSliced.map(([id, fields]) => this.deserialize(stream, id, fields));
+
+    // FR-7 reconnect fallback: if the caller's checkpoint is older than the
+    // oldest entry still in Redis, the gap between them was trimmed out of the
+    // live window. Backfill it from the durable archive (deduped change-points)
+    // and prepend, so a client returning after a long absence isn't handed a
+    // truncated result. Best-effort: any failure falls back to Redis-only.
+    const archiveMessages = await this.backfillFromArchive(
+      stream,
+      controllerId,
+      sinceStreamId,
+      maxCount,
+    );
+
+    const combined = [...archiveMessages, ...redisMessages];
+    if (combined.length === 0) {
       return { messages: [], highWaterMark: sinceStreamId, hasMore: false };
     }
 
-    const hasMore = entries.length > maxCount;
-    const sliced = hasMore ? entries.slice(0, maxCount) : entries;
-    const messages = sliced.map(([id, fields]) => this.deserialize(stream, id, fields));
+    const capped = combined.length > maxCount;
+    const messages = capped ? combined.slice(0, maxCount) : combined;
     const highWaterMark = messages[messages.length - 1].streamId ?? sinceStreamId;
+    return { messages, highWaterMark, hasMore: capped || redisHasMore };
+  }
 
-    return { messages, highWaterMark, hasMore };
+  /**
+   * Fetch archived heartbeats filling the gap between `sinceStreamId` and the
+   * oldest entry currently retained in Redis. Returns [] (and logs) on any
+   * problem so the live read path is never broken by an archive issue.
+   */
+  private async backfillFromArchive(
+    stream: string,
+    controllerId: number,
+    sinceStreamId: string,
+    maxCount: number,
+  ): Promise<Message[]> {
+    if (!this.archive?.getSince || !archiveEnabled()) return [];
+    try {
+      const sinceTs = parseInt(sinceStreamId.split('-')[0], 10);
+      if (!Number.isFinite(sinceTs)) return [];
+
+      const oldest = (await this.redis.xrange(stream, '-', '+', 'COUNT', 1)) as Array<[string, string[]]>;
+      const oldestId = oldest?.[0]?.[0];
+      // No gap unless the checkpoint predates the oldest retained entry.
+      if (oldestId && compareStreamIds(sinceStreamId, oldestId) >= 0) return [];
+      const oldestTs = oldestId ? parseInt(oldestId.split('-')[0], 10) : Number.MAX_SAFE_INTEGER;
+
+      const items = await this.archive.getSince(controllerId, sinceTs, maxCount + 1);
+      return items
+        .filter((it) => it.ts < oldestTs) // entries >= oldestTs are still in Redis
+        .map((it) => this.archivedToMessage(stream, controllerId, it));
+    } catch (err: any) {
+      console.warn(`[RedisBroker] archive backfill failed (non-fatal) for controller ${controllerId}: ${err?.message ?? err}`);
+      return [];
+    }
+  }
+
+  private archivedToMessage(stream: string, controllerId: number, it: ArchivedItem): Message {
+    return {
+      timestamp: new Date(it.ts).toISOString(),
+      sender: {
+        type: (it.senderType as 'mobile' | 'controller') || 'controller',
+        ip: it.senderIp || 'unknown',
+      },
+      controllerId,
+      protobufPayload: it.payloadRaw,
+      streamId: it.streamId,
+      streamKey: stream,
+    };
   }
 
   /**
