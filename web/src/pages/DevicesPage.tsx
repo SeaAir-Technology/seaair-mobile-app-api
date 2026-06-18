@@ -46,7 +46,7 @@ export function DevicesPage(): JSX.Element {
       {/* Desktop: slim list column + flexible detail. Mobile: one pane at a
           time — the list until a controller is selected, then the detail
           (which carries a back button). */}
-      <div className="flex-1 overflow-hidden md:grid md:grid-cols-[20rem_minmax(0,1fr)]">
+      <div className="flex-1 overflow-hidden md:grid md:grid-cols-[30rem_minmax(0,1fr)]">
         <div className={`h-full overflow-hidden ${controllerId ? 'hidden md:block' : 'block'}`}>
           <DeviceListColumn
             activeControllerId={controllerId}
