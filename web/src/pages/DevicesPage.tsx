@@ -43,15 +43,24 @@ export function DevicesPage(): JSX.Element {
         filterText={filterText}
         onFilterTextChange={setFilterText}
       />
-      <div className="flex-1 grid grid-cols-2 overflow-hidden">
-        <DeviceListColumn
-          activeControllerId={controllerId}
-          searchText={searchText}
-          page={page}
-          onPageChange={setPage}
-          onSelect={(id) => navigate(`/devices/${id}`)}
-        />
-        <div className="border-l border-ink-200 overflow-y-auto bg-ink-50">
+      {/* Desktop: slim list column + flexible detail. Mobile: one pane at a
+          time — the list until a controller is selected, then the detail
+          (which carries a back button). */}
+      <div className="flex-1 overflow-hidden md:grid md:grid-cols-[20rem_minmax(0,1fr)]">
+        <div className={`h-full overflow-hidden ${controllerId ? 'hidden md:block' : 'block'}`}>
+          <DeviceListColumn
+            activeControllerId={controllerId}
+            searchText={searchText}
+            page={page}
+            onPageChange={setPage}
+            onSelect={(id) => navigate(`/devices/${id}`)}
+          />
+        </div>
+        <div
+          className={`h-full border-ink-200 overflow-y-auto bg-ink-50 md:border-l ${
+            controllerId ? 'block' : 'hidden md:block'
+          }`}
+        >
           {controllerId ? (
             <DeviceDetail controllerId={controllerId} filters={filters} />
           ) : (
@@ -110,7 +119,7 @@ function DeviceListColumn({
   const windowLabel = data ? formatWindow(data.windowMs) : '…';
 
   return (
-    <div className="overflow-y-auto flex flex-col">
+    <div className="h-full overflow-y-auto flex flex-col">
       <div className="px-4 py-2 text-xs text-ink-500 flex items-center justify-between border-b border-ink-200 sticky top-0 bg-white z-10">
         <span>
           Devices active in the last {windowLabel}
