@@ -38,27 +38,32 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
     else process.env.ARCHIVE_ENABLED = SAVED.archive;
   });
 
-  it('serves series from the durable archive (not the Redis live window) when archiving is on', async () => {
-    const t0 = 1_781_700_000_000;
+  it('merges deep archive history with the live Redis edge when archiving is on', async () => {
+    const now = Date.now();
+    const archivedTs = now - 2 * 60 * 60 * 1000; // 2h ago -> archive domain
+    const liveTs = now - 60 * 1000; // 1 min ago -> live-edge domain
     const getRange = vi.fn(async () => [
-      { controllerId: '101', ts: t0, lastTs: t0 + 1000, payloadRaw: wrappedHvacHeartbeat('Cabin Air') },
-      { controllerId: '101', ts: t0 + 5000, lastTs: t0 + 6000, payloadRaw: wrappedHvacHeartbeat('Cabin Air') },
+      { controllerId: '101', ts: archivedTs, lastTs: archivedTs, payloadRaw: wrappedHvacHeartbeat('Cabin Air') },
+    ]);
+    const getStreamHistory = vi.fn(async () => [
+      { streamId: `${liveTs}-0`, protobufPayload: wrappedHvacHeartbeat('Cabin Air') },
     ]);
     app.locals.archiveStore = { getRange };
+    app.locals.messageBroker = { getStreamHistory };
 
     const res = await request(app)
       .get('/dashboard/api/devices/101/analytics')
       .query({ window: '7d' });
 
     expect(res.status).toBe(200);
-    expect(res.body.source).toBe('archive');
-    expect(getRange).toHaveBeenCalledTimes(1);
-    // Decoded protobuf paths the frontend charts on.
+    expect(res.body.source).toBe('archive+live');
+    expect(getRange).toHaveBeenCalledTimes(1); // older history from the archive
+    expect(getStreamHistory).toHaveBeenCalledTimes(1); // recent edge from Redis
     expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.temperture');
     const temp = res.body.series['syncDevice2Controller.hvac.temperture'];
-    expect(temp).toHaveLength(2);
-    expect(temp[0].t).toBe(t0 + 1000); // plotted at lastTs (latest-wins position)
-    expect(temp[0].v).toBe(74);
+    expect(temp).toHaveLength(2); // one archived (old) + one live (recent), stitched
+    expect(temp[0].t).toBeLessThan(temp[1].t); // sorted ascending: archive before live
+    expect(temp[1].t).toBe(liveTs); // live edge point at its real timestamp
     expect(res.body.scanned).toBe(2);
   });
 

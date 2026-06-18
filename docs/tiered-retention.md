@@ -138,6 +138,13 @@ data migration. The table and alarm are additive and safe to leave in place.
 `raw` returns measure values directly; a time resolution returns
 `{ avg, min, max }` per numeric measure per bucket.
 
+The dashboard's device analytics view (`GET /dashboard/api/devices/:id/analytics`)
+uses a **hybrid read**: history older than the last ~5 min comes from the
+archive, and the most recent window is read live from Redis, so the live edge is
+real-time and unaffected by archive write lag or change-point compression. It
+decodes each payload into the same `{path:[{t,v}]}` series shape the SPA already
+charts; it falls back to a pure Redis-live-window read when archiving is off.
+
 ## Config
 
 All new env vars are documented in [`.env.example`](../.env.example):
