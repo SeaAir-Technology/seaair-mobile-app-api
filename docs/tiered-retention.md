@@ -20,12 +20,20 @@ Everything is behind feature flags (see [`.env.example`](../.env.example)) and
 Heartbeats arrive ~every 5s and are mostly identical. Instead of storing ~17k
 points/controller/day, we store only **change-points**: a new item is written
 when decoded telemetry changes (or comms resume after a gap). An unchanged
-heartbeat just bumps the prior item's `repeated` counter and extends `lastTs`,
-proving the machine kept communicating without growing the table. The query
-layer expands these sparse points back into time buckets (`raw|1m|5m|1h`,
-avg/min/max). A 4-day mostly-constant series collapses from ~69k points to a
-handful. There is intentionally **no separate rollup table** — change-point
-storage already does that job, and aggregation happens app-side at query time.
+heartbeat bumps the prior item's `repeated` counter, extends `lastTs`, and
+**refreshes the stored reading to the newest values (latest-wins)** — so the
+row's measures/payload always correspond to its `lastTs` (the current/end of
+the run), not its `ts` (when the value first appeared). The query layer expands
+these sparse points back into time buckets (`raw|1m|5m|1h`, avg/min/max). A
+4-day mostly-constant series collapses from ~69k points to a handful. There is
+intentionally **no separate rollup table** — change-point storage already does
+that job, and aggregation happens app-side at query time.
+
+Continuously-moving power measures (`powerRate`, and the monotonic accumulator
+`powerTotal`) are **excluded from change-detection** (`FINGERPRINT_EXCLUDED_MEASURES`
+in `archiveStore.ts`): otherwise a running machine would emit a new change-point
+on nearly every heartbeat. They are still stored on every retained point and,
+via latest-wins, always reflect the most recent reading.
 
 > Consequence: the reconnect fallback (FR-7) replays distinct *state changes*
 > in the gap, not every redundant 5s heartbeat — less data, same information.

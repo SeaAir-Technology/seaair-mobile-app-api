@@ -194,13 +194,26 @@ export function extractTelemetry(decoded: DecodedPayload | null): Telemetry | nu
 }
 
 /**
+ * Measures intentionally excluded from change-detection. `powerTotal` is a
+ * monotonic accumulator and `powerRate` drifts continuously, so including
+ * either would force a brand-new change-point on nearly every heartbeat of a
+ * running machine — defeating compression. They are still stored on every
+ * retained point and, via latest-wins on duplicates, always reflect the most
+ * recent reading at `lastTs`. (`budgetSecondsSinceReset` is another monotonic
+ * counter that could be added here if firmware starts emitting it.)
+ */
+const FINGERPRINT_EXCLUDED_MEASURES = new Set(['powerRate', 'powerTotal']);
+
+/**
  * Deterministic fingerprint of a telemetry reading for change-detection.
- * Floats are rounded to 2 decimals so power-rate jitter doesn't defeat the
- * dedup. Keys sorted for stability.
+ * Floats are rounded to 2 decimals so jitter doesn't defeat the dedup, and
+ * continuously-moving power measures are excluded entirely. Keys sorted for
+ * stability.
  */
 export function fingerprint(t: Telemetry): string {
   const round = (n: number) => Math.round(n * 100) / 100;
   const m = Object.keys(t.measures)
+    .filter((k) => !FINGERPRINT_EXCLUDED_MEASURES.has(k))
     .sort()
     .map((k) => `${k}=${round(t.measures[k])}`)
     .join(',');
@@ -258,12 +271,27 @@ export class ArchiveStore {
       const gapped = prev && input.ts - prev.lastTs > gapMs();
 
       if (unchanged && !gapped) {
+        // Latest-wins: bump repeated, advance lastTs, and refresh the stored
+        // reading to this (newest) heartbeat. The change-point's `ts` (sort
+        // key) stays anchored at when the value first appeared, but its
+        // measures/payload/streamId now correspond to `lastTs` — so power
+        // measures match the current/end position of the run rather than its
+        // start. (`state` is a DynamoDB reserved word, hence the alias.)
         await this.doc.send(
           new UpdateCommand({
             TableName: tableName(),
             Key: { controllerId: String(input.controllerId), ts: prev!.sk },
-            UpdateExpression: 'ADD repeated :one SET lastTs = :ts',
-            ExpressionAttributeValues: { ':one': 1, ':ts': input.ts },
+            UpdateExpression:
+              'ADD repeated :one SET lastTs = :ts, measures = :m, #state = :s, payloadRaw = :p, streamId = :sid',
+            ExpressionAttributeNames: { '#state': 'state' },
+            ExpressionAttributeValues: {
+              ':one': 1,
+              ':ts': input.ts,
+              ':m': telemetry.measures,
+              ':s': telemetry.state,
+              ':p': input.payloadRaw,
+              ':sid': input.streamId,
+            },
           }),
         );
         prev!.lastTs = input.ts;

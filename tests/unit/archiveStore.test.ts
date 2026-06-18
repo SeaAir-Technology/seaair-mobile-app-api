@@ -7,7 +7,19 @@ import {
   type ArchiveWriteInput,
 } from '../../src/services/archiveStore';
 import { decodePayload } from '../../src/services/protoDecoder';
-import { hvacHeartbeat, wrappedHvacHeartbeat, utilityHeartbeat, legacyDeviceInfoRequest } from '../helpers/proto';
+import { hvacHeartbeat, wrappedHvacHeartbeat, utilityHeartbeat, legacyDeviceInfoRequest, encodeBase64 } from '../helpers/proto';
+
+/** A BM.Hvac heartbeat with fixed temp/humidity/mode but configurable power. */
+function hvacWithPower(powerRate: number, powerTotal: number): string {
+  return encodeBase64('BM.Hvac', {
+    config: { name: 'P', mode: 1 },
+    temperture: 72,
+    humidity: 55,
+    voltage: 12000,
+    powerRate,
+    powerTotal,
+  });
+}
 
 /**
  * Fake DynamoDBDocumentClient. `send` records every command and dispatches to
@@ -86,6 +98,12 @@ describe('fingerprint', () => {
     const c = extractTelemetry(decodePayload(utilityHeartbeat('X')))!;
     expect(fingerprint(a)).not.toBe(fingerprint(c));
   });
+
+  it('ignores powerRate/powerTotal so power-only changes share a fingerprint', () => {
+    const a = extractTelemetry(decodePayload(hvacWithPower(60, 100)))!;
+    const b = extractTelemetry(decodePayload(hvacWithPower(75, 250)))!;
+    expect(fingerprint(a)).toBe(fingerprint(b));
+  });
 });
 
 describe('ArchiveStore.write — change-based dedup (FR-6)', () => {
@@ -158,6 +176,36 @@ describe('ArchiveStore.write — change-based dedup (FR-6)', () => {
       },
     });
     await expect(new ArchiveStore(doc).write(input())).resolves.toBeUndefined();
+  });
+
+  it('latest-wins: a duplicate refreshes measures/payloadRaw/streamId to the newest reading', async () => {
+    const doc = fakeDoc({ QueryCommand: () => ({ Items: [] }) });
+    const store = new ArchiveStore(doc);
+    await store.write(input({ ts: 1_781_000_000_000, streamId: 'first-0' }));
+    await store.write(input({ ts: 1_781_000_005_000, streamId: 'latest-0' }));
+
+    const update = doc.sends.find((c: any) => c.constructor.name === 'UpdateCommand');
+    const vals = update.input.ExpressionAttributeValues;
+    expect(vals[':ts']).toBe(1_781_000_005_000); // lastTs = newest
+    expect(vals[':sid']).toBe('latest-0'); // streamId refreshed to newest
+    expect(update.input.UpdateExpression).toMatch(/SET lastTs = :ts, measures = :m/);
+    // Key still targets the ORIGINAL change-point (first ts), not a new row.
+    expect(update.input.Key.ts).toBe(1_781_000_000_000);
+  });
+
+  it('power-only movement is a duplicate (one Put, one Update) carrying the latest power', async () => {
+    const doc = fakeDoc({ QueryCommand: () => ({ Items: [] }) });
+    const store = new ArchiveStore(doc);
+    await store.write(input({ ts: 1_781_000_000_000, payloadRaw: hvacWithPower(60, 100) }));
+    await store.write(input({ ts: 1_781_000_005_000, payloadRaw: hvacWithPower(75, 250) }));
+
+    const puts = doc.sends.filter((c: any) => c.constructor.name === 'PutCommand');
+    const updates = doc.sends.filter((c: any) => c.constructor.name === 'UpdateCommand');
+    expect(puts).toHaveLength(1); // power change alone did NOT spawn a new row
+    expect(updates).toHaveLength(1);
+    // ...and the retained row now carries the newest power values.
+    expect(updates[0].input.ExpressionAttributeValues[':m'].powerTotal).toBe(250);
+    expect(updates[0].input.ExpressionAttributeValues[':m'].powerRate).toBe(75);
   });
 });
 
