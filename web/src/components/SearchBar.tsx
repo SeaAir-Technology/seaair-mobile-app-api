@@ -50,7 +50,7 @@ export function SearchBar({
 
   return (
     <div className="border-b border-ink-200 bg-white px-4 py-3 space-y-2">
-      <form onSubmit={submit} className="flex items-center gap-2">
+      <form onSubmit={submit} className="flex items-center gap-2 flex-wrap">
         <label className="text-sm text-ink-600" htmlFor="controller-search">
           Controller
         </label>
@@ -61,7 +61,7 @@ export function SearchBar({
           placeholder="Search by controller identifier (e.g. 1042)"
           value={searchText}
           onChange={(e) => onSearchTextChange(e.target.value)}
-          className="flex-1 max-w-[320px] px-3 py-1.5 border border-ink-200 rounded text-sm font-mono"
+          className="flex-1 min-w-[160px] w-full sm:w-auto sm:max-w-[320px] px-3 py-1.5 border border-ink-200 rounded text-sm font-mono"
         />
         <button
           type="submit"

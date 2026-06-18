@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { CurrentState } from './CurrentState';
 import { History } from './History';
 import { Analytics } from './Analytics';
@@ -6,7 +7,10 @@ import { useMarkAllReceived } from '../../hooks/useDeviceMutations';
 import { useDeviceQueue } from '../../hooks/useDeviceQueue';
 import type { PayloadFilter } from '../../lib/types';
 
-type Tab = 'state' | 'history' | 'analytics';
+// Overview combines the formatted current-state summary with the analytics
+// charts (history stays its own tab). On phones the device list and this
+// detail pane are shown one at a time; the back button returns to the list.
+type Tab = 'overview' | 'history';
 
 interface Props {
   controllerId: number;
@@ -14,10 +18,18 @@ interface Props {
 }
 
 export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
-  const [tab, setTab] = useState<Tab>('state');
+  const [tab, setTab] = useState<Tab>('overview');
+  const navigate = useNavigate();
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 pt-3 pb-0 border-b border-ink-200 bg-white sticky top-0 z-10">
+        <button
+          type="button"
+          onClick={() => navigate('/devices')}
+          className="md:hidden inline-flex items-center gap-1 text-sm text-ink-600 hover:text-ink-900 mb-2 -ml-1"
+        >
+          <span aria-hidden>←</span> Devices
+        </button>
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-xs text-ink-500 mb-1">Controller</div>
@@ -31,7 +43,7 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
           </div>
         </div>
         <div className="flex gap-1">
-          {(['state', 'history', 'analytics'] as Tab[]).map((t) => (
+          {(['overview', 'history'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -41,21 +53,27 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
                   : 'border-transparent text-ink-500 hover:text-ink-900'
               }`}
             >
-              {t === 'state'
-                ? 'Current State'
-                : t === 'history'
-                ? 'History'
-                : 'Analytics'}
+              {t === 'overview' ? 'Overview' : 'History'}
             </button>
           ))}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {tab === 'state' && <CurrentState controllerId={controllerId} />}
+        {tab === 'overview' && (
+          <>
+            <CurrentState controllerId={controllerId} />
+            <div className="border-t border-ink-200 mx-4" />
+            <div className="px-1 pt-2 pb-1">
+              <div className="px-3 text-xs font-medium uppercase tracking-wide text-ink-500">
+                Analytics
+              </div>
+            </div>
+            <Analytics controllerId={controllerId} />
+          </>
+        )}
         {tab === 'history' && (
           <History controllerId={controllerId} filters={filters} />
         )}
-        {tab === 'analytics' && <Analytics controllerId={controllerId} />}
       </div>
     </div>
   );
