@@ -41,6 +41,7 @@ import {
   revokeDashboardAccess,
   getUserBySub,
 } from '../services/dashboardAdmin';
+import { archiveEnabled, getArchiveStore, ArchiveStore } from '../services/archiveStore';
 
 const router = express.Router();
 
@@ -347,7 +348,13 @@ router.post('/devices/:controllerId/mark-all-received', async (req: Request, res
   }
 });
 
-// ---- Devices: analytics (skeleton) -----------------------------------------
+// ---- Devices: analytics -----------------------------------------------------
+//
+// Charts numeric telemetry over a window. Prefers the durable Tier-2 archive
+// (days of history, change-point compressed) and only falls back to sampling
+// the short Redis live window when archiving is disabled. Either way we decode
+// each payload and emit the same {path: [{t,v}]} series shape the dashboard
+// expects, so the data source is transparent to the frontend.
 
 router.get('/devices/:controllerId/analytics', async (req: Request, res: Response): Promise<void> => {
   const broker = getRedisBroker(req);
@@ -361,31 +368,52 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
     return;
   }
   const windowMs = parseWindow((req.query.window as string) || '24h');
-  const cutoff = Date.now() - windowMs;
+  const now = Date.now();
+  const cutoff = now - windowMs;
   const sampleCap = 5000;
 
   try {
-    const history = await broker.getStreamHistory(controllerId, 'fw2mobile', sampleCap);
     const series: Record<string, Array<{ t: number; v: number }>> = {};
     let scanned = 0;
+    let source: 'archive' | 'live' = 'live';
 
-    for (const msg of history) {
-      const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
-      if (tsMs < cutoff) break;
-      scanned++;
-      const decoded = decodePayload(msg.protobufPayload);
-      if (!decoded) continue;
-      walkNumericFields(decoded.data, '', (path, value) => {
-        if (!series[path]) series[path] = [];
-        series[path].push({ t: tsMs, v: value });
-      });
+    const archive = (req.app.locals.archiveStore as ArchiveStore | undefined) ?? getArchiveStore();
+
+    if (archiveEnabled() && typeof archive.getRange === 'function') {
+      // Tier-2 archive: full retained history, not just the Redis live window.
+      // Each change-point's payload reflects its latest reading (latest-wins),
+      // so we plot it at `lastTs`. Items arrive oldest-first already.
+      source = 'archive';
+      const items = await archive.getRange(controllerId, cutoff, now, sampleCap);
+      for (const item of items) {
+        const decoded = decodePayload(item.payloadRaw);
+        if (!decoded) continue;
+        scanned++;
+        const t = item.lastTs ?? item.ts;
+        walkNumericFields(decoded.data, '', (path, value) => {
+          (series[path] ??= []).push({ t, v: value });
+        });
+      }
+    } else {
+      // Fallback: sample the Redis live window (archiving off / local dev).
+      const history = await broker.getStreamHistory(controllerId, 'fw2mobile', sampleCap);
+      for (const msg of history) {
+        const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
+        if (tsMs < cutoff) break;
+        scanned++;
+        const decoded = decodePayload(msg.protobufPayload);
+        if (!decoded) continue;
+        walkNumericFields(decoded.data, '', (path, value) => {
+          (series[path] ??= []).push({ t: tsMs, v: value });
+        });
+      }
+      for (const k of Object.keys(series)) series[k].reverse(); // xrevrange is newest-first
     }
-
-    for (const k of Object.keys(series)) series[k].reverse();
 
     res.json({
       controllerId,
       windowMs,
+      source,
       scanned,
       series,
       seriesNames: Object.keys(series).sort(),

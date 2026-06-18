@@ -504,6 +504,27 @@ export class ArchiveStore {
    * first, as raw history items. The caller merges these with live Redis
    * entries. Returns deduped state-changes, not every redundant heartbeat.
    */
+  /**
+   * Raw change-points within [from, to], keeping the most recent `limit`,
+   * returned oldest-first. Unlike `query()` this does no bucketing — callers
+   * (e.g. the dashboard analytics view) decode each point's payload themselves.
+   */
+  async getRange(controllerId: number, from: number, to: number, limit: number): Promise<ArchivedItem[]> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const res = await this.doc.send(
+      new QueryCommand({
+        TableName: tableName(),
+        KeyConditionExpression: 'controllerId = :c AND ts BETWEEN :from AND :to',
+        FilterExpression: '#ttl > :now',
+        ExpressionAttributeNames: { '#ttl': 'ttl' },
+        ExpressionAttributeValues: { ':c': String(controllerId), ':from': from, ':to': to, ':now': nowSec },
+        ScanIndexForward: false, // newest first, so Limit keeps the most recent
+        Limit: limit,
+      }),
+    );
+    return ((res.Items ?? []) as ArchivedItem[]).reverse(); // back to chronological
+  }
+
   async getSince(controllerId: number, sinceTs: number, limit: number): Promise<ArchivedItem[]> {
     const nowSec = Math.floor(Date.now() / 1000);
     const res = await this.doc.send(
