@@ -11,7 +11,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import type { AnalyticsSeries } from '../../lib/types';
+import { mergeSeries } from '../../lib/chartSeries';
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 
@@ -41,27 +41,6 @@ const COMBOS = [
 ] as const;
 
 type ComboId = (typeof COMBOS)[number]['id'];
-
-// Merge two {t,v} series into one row-per-timestamp dataset suitable for
-// a recharts LineChart with two Lines. Missing samples are left undefined
-// and the lines are drawn with connectNulls so a sparse series doesn't
-// punch holes through the denser one.
-function mergeSeries(
-  series: AnalyticsSeries,
-  primaryPath: string,
-  secondaryPath: string
-): Array<{ t: number; primary?: number; secondary?: number }> {
-  const map = new Map<number, { t: number; primary?: number; secondary?: number }>();
-  for (const p of series[primaryPath] || []) {
-    map.set(p.t, { t: p.t, primary: p.v });
-  }
-  for (const p of series[secondaryPath] || []) {
-    const row = map.get(p.t);
-    if (row) row.secondary = p.v;
-    else map.set(p.t, { t: p.t, secondary: p.v });
-  }
-  return Array.from(map.values()).sort((a, b) => a.t - b.t);
-}
 
 // The backend's analytics endpoint extracts every numeric leaf from decoded
 // protobuf payloads in the window and returns them as named series. We just
@@ -186,7 +165,6 @@ export function Analytics({
                         stroke={activeCombo.primary.color}
                         dot={false}
                         strokeWidth={1.5}
-                        connectNulls
                       />
                       <Line
                         yAxisId="right"
