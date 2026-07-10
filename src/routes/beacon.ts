@@ -5,13 +5,15 @@
  * identity comes from their Cognito JWT (we don't trust client-supplied
  * identity). Body: { controllerId: number, message?: string }.
  *
- * Email resolution: Cognito access tokens don't include the email claim
- * by default, so we don't depend on req.auth.email being populated. We
- * resolve it server-side from req.auth.sub via the cognitoUser cache.
- * If a future Cognito access-token customization adds email to the JWT,
- * the lookup short-circuits and we use the claim directly.
+ * Email/name resolution: Cognito access tokens don't include the email
+ * or name claims by default, so we don't depend on req.auth.email /
+ * req.auth.name being populated. We resolve them server-side from
+ * req.auth.sub via the cognitoUser cache (one ListUsers lookup covers
+ * both attributes). If a future Cognito access-token customization adds
+ * these claims to the JWT, the lookup short-circuits per-field and we
+ * use the claim directly.
  *
- * Fallback when both the claim and the lookup return nothing:
+ * Fallback when both the email claim and the lookup return nothing:
  *   - Federated users (Google, Sign in with Apple) get their
  *     cognito:username, which is in the form "google_<id>" or
  *     "signinwithapple_<id>" — enough for support to identify the user
@@ -21,12 +23,15 @@
  *   - The userId field on the beacon record always carries the full sub
  *     so support can cross-reference exactly even when userEmail is a
  *     placeholder.
+ * userName has no such fallback chain — it's cosmetic (shown in the
+ * alert email), so if Cognito has no `name` attribute for the user it's
+ * simply omitted.
  */
 
 import express, { Request, Response } from 'express';
 import { verifyJWT } from '../auth';
 import { createBeacon } from '../services/beacons';
-import { getUserEmailBySub } from '../services/cognitoUser';
+import { getCognitoUserBySub } from '../services/cognitoUser';
 
 const router = express.Router();
 
@@ -65,16 +70,20 @@ router.post('/', verifyJWT, async (req: Request, res: Response): Promise<void> =
     return;
   }
 
-  // 1. Trust the JWT email claim if present (free, future-proof if Cognito
-  //    is configured to emit it later).
-  // 2. Look up via Cognito ListUsers by sub. Cached in-memory.
-  // 3. Fall back to the cognito:username for federated users so support
-  //    sees "google_..." or "signinwithapple_..." instead of an opaque
-  //    sub prefix; the userId field still has the full sub.
+  // 1. Trust the JWT email/name claims if present (free, future-proof if
+  //    Cognito is configured to emit them later).
+  // 2. Look up via Cognito ListUsers by sub. Cached in-memory. One call
+  //    resolves both email and name.
+  // 3. Email-only fallback to cognito:username for federated users so
+  //    support sees "google_..." or "signinwithapple_..." instead of an
+  //    opaque sub prefix; the userId field still has the full sub. name
+  //    has no fallback — it's cosmetic, so it's just left unset.
   let userEmail = (req.auth as any).email as string | undefined;
-  if (!userEmail) {
-    const looked = await getUserEmailBySub(userId);
-    if (looked) userEmail = looked;
+  let userName = (req.auth as any).name as string | undefined;
+  if (!userEmail || !userName) {
+    const looked = await getCognitoUserBySub(userId);
+    if (!userEmail && looked.email) userEmail = looked.email;
+    if (!userName && looked.name) userName = looked.name;
   }
   if (!userEmail) {
     const cognitoUsername =
@@ -103,6 +112,7 @@ router.post('/', verifyJWT, async (req: Request, res: Response): Promise<void> =
       controllerId,
       userId,
       userEmail,
+      userName,
       message: message?.trim() || undefined,
     });
     res.status(201).json({ success: true, beacon });
