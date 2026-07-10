@@ -76,6 +76,7 @@ export async function notifyBeaconRaised(beacon: Beacon): Promise<void> {
   const body = [
     'A SeaAir customer raised a help beacon.',
     '',
+    `Name:       ${beacon.userName || '(not set)'}`,
     `Customer:   ${beacon.userEmail}`,
     `User ID:    ${beacon.userId}`,
     `Controller: ${beacon.controllerId}`,

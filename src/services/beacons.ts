@@ -65,6 +65,7 @@ export interface Beacon {
   controllerId: number;
   userId: string;
   userEmail: string;
+  userName?: string;
   message?: string;
   createdAt: string;
   expiresAt: number;
@@ -74,6 +75,7 @@ export interface CreateBeaconInput {
   controllerId: number;
   userId: string;
   userEmail: string;
+  userName?: string;
   message?: string;
 }
 
@@ -87,6 +89,7 @@ export async function createBeacon(input: CreateBeaconInput): Promise<Beacon> {
     controllerId: input.controllerId,
     userId: input.userId,
     userEmail: input.userEmail,
+    userName: input.userName,
     message: input.message,
     createdAt,
     expiresAt,
@@ -201,6 +204,7 @@ function itemToBeacon(item: Record<string, any>): Beacon {
       : parseInt(item.controllerId, 10),
     userId: item.userId,
     userEmail: item.userEmail,
+    userName: item.userName,
     message: item.message,
     createdAt: item.createdAt,
     expiresAt: typeof item.expiresAt === 'number'
