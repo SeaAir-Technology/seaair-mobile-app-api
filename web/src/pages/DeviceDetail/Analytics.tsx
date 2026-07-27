@@ -10,9 +10,16 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
-import { mergeSeries } from '../../lib/chartSeries';
+import {
+  mergeSeries,
+  numericPoints,
+  modeSegments,
+  alarmEdges,
+} from '../../lib/chartSeries';
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 
@@ -42,6 +49,66 @@ const COMBOS = [
 ] as const;
 
 type ComboId = (typeof COMBOS)[number]['id'];
+
+// Background shading per run mode. Standby stays white (no area).
+const MODE_FILL: Record<string, string> = {
+  COOL: '#dbeafe', // light blue
+  HEAT: '#fee2e2', // light red
+  HUMIDITY: '#dcfce7', // light green
+  FAN: '#ffedd5', // light orange
+};
+
+const CHART_MARGIN = { top: 14, right: 5, bottom: 5, left: 5 };
+
+// Red triangle rendered above the plot at an alarm's x position, via
+// ReferenceLine's label slot (viewBox.x is the line's pixel x, viewBox.y the
+// plot top).
+function AlarmFlag({
+  viewBox,
+}: {
+  viewBox?: { x?: number; y?: number };
+}): JSX.Element | null {
+  if (!viewBox || viewBox.x === undefined) return null;
+  const { x, y = 0 } = viewBox;
+  return (
+    <g transform={`translate(${x - 5.5}, ${y - 12})`}>
+      <path d="M5.5 0 L11 9.5 H0 Z" fill="#dc2626" />
+      <path d="M5.5 3v2.9" stroke="white" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="5.5" cy="7.6" r="0.8" fill="white" />
+    </g>
+  );
+}
+
+function ModeLegend(): JSX.Element {
+  const items: Array<[string, string]> = [
+    ['Cool', MODE_FILL.COOL],
+    ['Heat', MODE_FILL.HEAT],
+    ['Humidity', MODE_FILL.HUMIDITY],
+    ['Fan', MODE_FILL.FAN],
+    ['Standby', '#ffffff'],
+  ];
+  return (
+    <div className="flex items-center gap-3 flex-wrap mt-2 text-[10px] text-ink-500">
+      {items.map(([label, color]) => (
+        <span key={label} className="flex items-center gap-1">
+          <span
+            className="inline-block w-3 h-3 rounded-sm border border-ink-200"
+            style={{ backgroundColor: color }}
+          />
+          {label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1">
+        <svg viewBox="0 0 11 10" width="11" height="10">
+          <path d="M5.5 0 L11 9.5 H0 Z" fill="#dc2626" />
+          <path d="M5.5 3v2.9" stroke="white" strokeWidth="1.4" strokeLinecap="round" />
+          <circle cx="5.5" cy="7.6" r="0.8" fill="white" />
+        </svg>
+        Alarm raised
+      </span>
+    </div>
+  );
+}
 
 function formatAge(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -109,13 +176,16 @@ export function Analytics({
   const { data, isLoading, error, refetch, dataUpdatedAt, isFetching } =
     useDeviceAnalytics(controllerId, windowExpr);
 
-  const allSeries = data?.seriesNames || [];
+  // Enum-string series (mode, compressor state) feed the tooltip but can't be
+  // drawn as lines, so keep the pickable list numeric-only.
+  const allSeries = (data?.seriesNames || []).filter(
+    (n) => numericPoints(data!.series[n]).length > 0
+  );
   const active =
     selectedSeries && allSeries.includes(selectedSeries)
       ? selectedSeries
       : allSeries[0] || null;
-  const chartData =
-    data && active ? data.series[active].map((p) => ({ t: p.t, v: p.v })) : [];
+  const chartData = data && active ? numericPoints(data.series[active]) : [];
 
   const activeCombo =
     COMBOS.find((c) => c.id === activeComboId) || COMBOS[0];
@@ -124,6 +194,12 @@ export function Analytics({
     : [];
   const comboPrimaryAvailable = !!data?.series[activeCombo.primary.path]?.length;
   const comboSecondaryAvailable = !!data?.series[activeCombo.secondary.path]?.length;
+
+  const comboEnd = comboData.length ? comboData[comboData.length - 1].t : 0;
+  const chartEnd = chartData.length ? chartData[chartData.length - 1].t : 0;
+  const comboModes = data ? modeSegments(data.series, comboEnd) : [];
+  const chartModes = data ? modeSegments(data.series, chartEnd) : [];
+  const alarms = data ? alarmEdges(data.series) : [];
 
   return (
     <div className="p-4 space-y-3">
@@ -186,10 +262,26 @@ export function Analytics({
               <>
                 <div style={{ width: '100%', height: 280 }}>
                   <ResponsiveContainer>
-                    <LineChart data={comboData}>
+                    <LineChart data={comboData} margin={CHART_MARGIN}>
                       <CartesianGrid stroke="#eef0f3" strokeDasharray="3 3" />
+                      {comboModes.map(
+                        (s) =>
+                          MODE_FILL[s.mode] && (
+                            <ReferenceArea
+                              key={`mode-${s.from}`}
+                              yAxisId="left"
+                              x1={s.from}
+                              x2={s.to}
+                              fill={MODE_FILL[s.mode]}
+                              fillOpacity={0.5}
+                              stroke="none"
+                            />
+                          )
+                      )}
                       <XAxis
                         dataKey="t"
+                        type="number"
+                        domain={['dataMin', 'dataMax']}
                         tickFormatter={(t) =>
                           new Date(t).toLocaleTimeString(undefined, {
                             hour: '2-digit',
@@ -230,9 +322,20 @@ export function Analytics({
                         strokeWidth={1.5}
                         connectNulls
                       />
+                      {alarms.map((t) => (
+                        <ReferenceLine
+                          key={`alarm-${t}`}
+                          yAxisId="left"
+                          x={t}
+                          stroke="#dc2626"
+                          strokeDasharray="3 3"
+                          label={<AlarmFlag />}
+                        />
+                      ))}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+                <ModeLegend />
                 {(!comboPrimaryAvailable || !comboSecondaryAvailable) && (
                   <div className="text-xs text-amber-700 mt-2">
                     {!comboPrimaryAvailable && (
@@ -291,10 +394,25 @@ export function Analytics({
               </div>
               <div style={{ width: '100%', height: 280 }}>
                 <ResponsiveContainer>
-                  <LineChart data={chartData}>
+                  <LineChart data={chartData} margin={CHART_MARGIN}>
                     <CartesianGrid stroke="#eef0f3" strokeDasharray="3 3" />
+                    {chartModes.map(
+                      (s) =>
+                        MODE_FILL[s.mode] && (
+                          <ReferenceArea
+                            key={`mode-${s.from}`}
+                            x1={s.from}
+                            x2={s.to}
+                            fill={MODE_FILL[s.mode]}
+                            fillOpacity={0.5}
+                            stroke="none"
+                          />
+                        )
+                    )}
                     <XAxis
                       dataKey="t"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
                       tickFormatter={(t) =>
                         new Date(t).toLocaleTimeString(undefined, {
                           hour: '2-digit',
@@ -314,9 +432,19 @@ export function Analytics({
                       dot={false}
                       strokeWidth={1.5}
                     />
+                    {alarms.map((t) => (
+                      <ReferenceLine
+                        key={`alarm-${t}`}
+                        x={t}
+                        stroke="#dc2626"
+                        strokeDasharray="3 3"
+                        label={<AlarmFlag />}
+                      />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+              <ModeLegend />
               <div className="text-xs text-ink-500 mt-2">
                 {chartData.length} samples · scanned {data.scanned} messages
               </div>

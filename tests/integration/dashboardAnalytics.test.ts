@@ -63,11 +63,32 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
     // Boolean fields (alarms) are emitted as 0/1 series
     expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.highPressure');
     expect(res.body.series['syncDevice2Controller.hvac.highPressure'][0].v).toBe(1);
+    // Enum fields (mode etc.) are emitted as string series
+    expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.config.mode');
+    expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('COOL');
     const temp = res.body.series['syncDevice2Controller.hvac.temperture'];
     expect(temp).toHaveLength(2); // one archived (old) + one live (recent), stitched
     expect(temp[0].t).toBeLessThan(temp[1].t); // sorted ascending: archive before live
     expect(temp[1].t).toBe(liveTs); // live edge point at its real timestamp
     expect(res.body.scanned).toBe(2);
+  });
+
+  it('emits zero-valued enums (STANDBY) via the defaults-aware decode', async () => {
+    process.env.ARCHIVE_ENABLED = 'false';
+    const getStreamHistory = vi.fn(async () => [
+      // mode 0 = STANDBY: omitted from the wire by proto3, must still be
+      // emitted so the dashboard doesn't show a stale previous mode
+      { streamId: `${Date.now()}-0`, protobufPayload: wrappedHvacHeartbeat('Cabin Air', 0) },
+    ]);
+    app.locals.messageBroker = { getStreamHistory };
+    app.locals.archiveStore = { getRange: vi.fn() };
+
+    const res = await request(app)
+      .get('/dashboard/api/devices/101/analytics')
+      .query({ window: '24h' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('STANDBY');
   });
 
   it('falls back to the Redis live window when archiving is disabled', async () => {

@@ -1,5 +1,17 @@
 import type { AnalyticsSeries } from './types';
 
+type NumericPoint = { t: number; v: number };
+
+// Series can carry enum strings ("COOL") alongside numbers; charts only draw
+// the numeric points.
+export function numericPoints(
+  points: Array<{ t: number; v: number | string }> | undefined
+): NumericPoint[] {
+  return (points || []).filter(
+    (p): p is NumericPoint => typeof p.v === 'number'
+  );
+}
+
 // The machine reports power samples on a steady cadence while it is running,
 // so a stretch with no primary samples means it was powered off. A gap counts
 // as "off" when it exceeds GAP_FACTOR × the series' median reporting interval.
@@ -23,8 +35,8 @@ export function medianInterval(points: Array<{ t: number }>): number | null {
 export function stateAt(
   series: AnalyticsSeries,
   t: number
-): Array<{ path: string; v: number; sampleT: number }> {
-  const out: Array<{ path: string; v: number; sampleT: number }> = [];
+): Array<{ path: string; v: number | string; sampleT: number }> {
+  const out: Array<{ path: string; v: number | string; sampleT: number }> = [];
   for (const path of Object.keys(series).sort()) {
     const points = series[path];
     let lo = 0;
@@ -48,7 +60,7 @@ export function stateAt(
 
 export interface GroupedStateRow {
   label: string;
-  v: number;
+  v: number | string;
   // Set on alarm-typed fields. The tooltip renders these as Yes/No, groups
   // them after the data rows, and highlights the row when v is truthy.
   alarm?: boolean;
@@ -65,7 +77,7 @@ function isAlarmLeaf(leaf: string): boolean {
 // and compressor.speed stay distinct) and state drops the message + device
 // prefix (e.g. syncDevice2Controller.hvac.). The controllerId leaf is just
 // the device's own id, so it is dropped.
-export function groupState(rows: Array<{ path: string; v: number }>): {
+export function groupState(rows: Array<{ path: string; v: number | string }>): {
   settings: GroupedStateRow[];
   state: GroupedStateRow[];
 } {
@@ -99,6 +111,62 @@ export function groupState(rows: Array<{ path: string; v: number }>): {
   return { settings, state };
 }
 
+export interface ModeSegment {
+  from: number;
+  to: number;
+  mode: string;
+}
+
+// Contiguous run-mode intervals for background shading. Reads the hvac
+// config.mode series (found by path shape, so the message wrapper can vary)
+// and merges consecutive same-mode samples. The last segment extends to endT
+// (the chart's right edge); time before the first sample has unknown mode and
+// gets no segment.
+export function modeSegments(
+  series: AnalyticsSeries,
+  endT: number
+): ModeSegment[] {
+  const key = Object.keys(series).find((k) => {
+    const segments = k.split('.');
+    return segments[segments.length - 1] === 'mode' && segments.includes('config');
+  });
+  if (!key) return [];
+  const points = series[key].filter(
+    (p): p is { t: number; v: string } => typeof p.v === 'string'
+  );
+  if (points.length === 0) return [];
+  const out: ModeSegment[] = [];
+  let from = points[0].t;
+  let mode = points[0].v;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].v !== mode) {
+      out.push({ from, to: points[i].t, mode });
+      from = points[i].t;
+      mode = points[i].v;
+    }
+  }
+  out.push({ from, to: Math.max(endT, from), mode });
+  return out;
+}
+
+// Timestamps where any alarm goes from inactive to active (including an
+// alarm already active at the first sample in the window), deduped across
+// alarm fields for marker rendering.
+export function alarmEdges(series: AnalyticsSeries): number[] {
+  const edges = new Set<number>();
+  for (const key of Object.keys(series)) {
+    const segments = key.split('.');
+    if (!isAlarmLeaf(segments[segments.length - 1])) continue;
+    let prev = 0;
+    for (const p of series[key]) {
+      const v = typeof p.v === 'number' ? p.v : 0;
+      if (v !== 0 && prev === 0) edges.add(p.t);
+      prev = v;
+    }
+  }
+  return Array.from(edges).sort((a, b) => a - b);
+}
+
 // Merge two {t,v} series into one row-per-timestamp dataset suitable for
 // a recharts LineChart with two Lines. The secondary (temperature) line is
 // drawn with connectNulls, so its sparse samples stay continuous. The primary
@@ -111,17 +179,17 @@ export function mergeSeries(
   secondaryPath: string
 ): Array<{ t: number; primary?: number; secondary?: number }> {
   const map = new Map<number, { t: number; primary?: number; secondary?: number }>();
-  for (const p of series[primaryPath] || []) {
+  for (const p of numericPoints(series[primaryPath])) {
     map.set(p.t, { t: p.t, primary: p.v });
   }
-  for (const p of series[secondaryPath] || []) {
+  for (const p of numericPoints(series[secondaryPath])) {
     const row = map.get(p.t);
     if (row) row.secondary = p.v;
     else map.set(p.t, { t: p.t, secondary: p.v });
   }
   const rows = Array.from(map.values()).sort((a, b) => a.t - b.t);
 
-  const primaryPoints = [...(series[primaryPath] || [])].sort(
+  const primaryPoints = numericPoints(series[primaryPath]).sort(
     (a, b) => a.t - b.t
   );
   const interval = medianInterval(primaryPoints);

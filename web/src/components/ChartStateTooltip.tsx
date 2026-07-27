@@ -4,6 +4,11 @@ import type { AnalyticsSeries } from '../lib/types';
 
 function formatValue(r: GroupedStateRow): string {
   if (r.alarm) return r.v !== 0 ? 'Yes' : 'No';
+  if (typeof r.v === 'string') {
+    // Enum values arrive as ALL_CAPS ("COOL", "BUDGET_RESET_HOURS_12")
+    const s = r.v.toLowerCase().replace(/_/g, ' ');
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
   return Number.isInteger(r.v) ? String(r.v) : r.v.toFixed(2);
 }
 

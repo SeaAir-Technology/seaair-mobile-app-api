@@ -46,12 +46,12 @@ export function hvacHeartbeat(name: string): string {
  * `syncDevice2Controller.hvac.config.name` — the shape that regressed when the
  * name lookup only checked shallow paths.
  */
-export function wrappedHvacHeartbeat(name: string): string {
+export function wrappedHvacHeartbeat(name: string, mode: number = 1): string {
   return encodeBase64('BLE.Msg', {
     syncDevice2Controller: {
       version: '1.2.3',
       hvac: {
-        config: { name, mode: 1, fan: { speed: 1 }, compressor: { speed: 3 } },
+        config: { name, mode, fan: { speed: 1 }, compressor: { speed: 3 } },
         temperture: 74,
         humidity: 66,
         highPressure: true,

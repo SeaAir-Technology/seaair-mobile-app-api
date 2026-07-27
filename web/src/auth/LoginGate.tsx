@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from './useAuth';
 
@@ -8,10 +9,37 @@ interface Props {
 // Renders the Cognito Hosted UI sign-in button until a session exists.
 // Once authenticated, hands off to AccessGate to verify dashboard-admin
 // group membership.
+//
+// Sessions outlive the 60-minute access token: the refresh token is valid
+// for 30 days, but oidc-client-ts only renews on a timer while the tab is
+// awake. When the app loads (or wakes) with an expired access token and a
+// stored refresh token, we renew silently instead of dumping the admin back
+// on the login page.
 export function LoginGate({ children }: Props): JSX.Element {
   const auth = useAuth();
+  const [resume, setResume] = useState<'idle' | 'trying' | 'failed'>('idle');
 
-  if (auth.isLoading) {
+  const canResume = !!auth.user?.refresh_token && resume !== 'failed';
+
+  useEffect(() => {
+    if (auth.isAuthenticated) {
+      if (resume !== 'idle') setResume('idle');
+      return;
+    }
+    if (auth.isLoading || auth.activeNavigator || resume !== 'idle') return;
+    if (!auth.user?.refresh_token) return;
+    setResume('trying');
+    auth
+      .signinSilent()
+      .then((user) => setResume(user ? 'idle' : 'failed'))
+      .catch(() => setResume('failed'));
+  }, [auth, resume]);
+
+  if (
+    auth.isLoading ||
+    resume === 'trying' ||
+    (!auth.isAuthenticated && !auth.error && canResume)
+  ) {
     return (
       <div className="flex items-center justify-center h-screen text-ink-500">
         Loading…

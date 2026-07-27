@@ -4,6 +4,8 @@ import {
   medianInterval,
   stateAt,
   groupState,
+  modeSegments,
+  alarmEdges,
   GAP_FACTOR,
 } from '../../web/src/lib/chartSeries';
 
@@ -236,5 +238,81 @@ describe('groupState', () => {
   it('falls back to the leaf name for short paths', () => {
     const { state } = groupState([row('hvac.humidity', 50)]);
     expect(state).toEqual([{ label: 'humidity', v: 50 }]);
+  });
+
+  it('carries enum string values through', () => {
+    const { settings, state } = groupState([
+      { path: 'syncDevice2Controller.hvac.config.mode', v: 'COOL' },
+      { path: 'syncDevice2Controller.hvac.config.compressor.state', v: 'ON' },
+    ]);
+    expect(settings).toEqual([
+      { label: 'compressor.state', v: 'ON' },
+      { label: 'mode', v: 'COOL' },
+    ]);
+    expect(state).toEqual([]);
+  });
+});
+
+describe('modeSegments', () => {
+  const MODE = 'syncDevice2Controller.hvac.config.mode';
+
+  it('merges consecutive same-mode samples and extends the last to endT', () => {
+    const segs = modeSegments(
+      {
+        [MODE]: [
+          { t: 0, v: 'COOL' },
+          { t: 10, v: 'COOL' },
+          { t: 20, v: 'HEAT' },
+          { t: 30, v: 'STANDBY' },
+        ],
+      },
+      50
+    );
+    expect(segs).toEqual([
+      { from: 0, to: 20, mode: 'COOL' },
+      { from: 20, to: 30, mode: 'HEAT' },
+      { from: 30, to: 50, mode: 'STANDBY' },
+    ]);
+  });
+
+  it('returns empty when no config.mode series exists', () => {
+    expect(modeSegments({ 'hvac.temperture': [{ t: 0, v: 70 }] }, 10)).toEqual(
+      []
+    );
+  });
+
+  it('never ends the last segment before its start', () => {
+    const segs = modeSegments({ [MODE]: [{ t: 40, v: 'FAN' }] }, 10);
+    expect(segs).toEqual([{ from: 40, to: 40, mode: 'FAN' }]);
+  });
+});
+
+describe('alarmEdges', () => {
+  it('marks inactive-to-active transitions across all alarm series', () => {
+    const edges = alarmEdges({
+      'syncDevice2Controller.hvac.highPressure': [
+        { t: 0, v: 0 },
+        { t: 10, v: 1 },
+        { t: 20, v: 1 },
+        { t: 30, v: 0 },
+        { t: 40, v: 1 },
+      ],
+      'syncDevice2Controller.hvac.config.lowPressureAlarm': [
+        { t: 5, v: 1 }, // active at first sample counts as an edge
+      ],
+      'syncDevice2Controller.hvac.temperture': [{ t: 10, v: 99 }], // not an alarm
+    });
+    expect(edges).toEqual([5, 10, 40]);
+  });
+
+  it('returns empty when no alarms fire', () => {
+    expect(
+      alarmEdges({
+        'syncDevice2Controller.hvac.highPressure': [
+          { t: 0, v: 0 },
+          { t: 10, v: 0 },
+        ],
+      })
+    ).toEqual([]);
   });
 });

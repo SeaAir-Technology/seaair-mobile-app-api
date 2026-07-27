@@ -377,7 +377,7 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
   const sampleCap = 5000;
 
   try {
-    const series: Record<string, Array<{ t: number; v: number }>> = {};
+    const series: Record<string, Array<{ t: number; v: number | string }>> = {};
     let scanned = 0;
     let source: 'archive+live' | 'live' = 'live';
 
@@ -385,8 +385,16 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
       const decoded = decodePayload(payload);
       if (!decoded) return;
       scanned++;
+      // Numbers/booleans come from the sparse decode so absent fields don't
+      // become fake zero samples. Enum strings come from the defaults:true
+      // view: their zero values (mode STANDBY, compressor ON) are omitted
+      // from the wire, and skipping them would leave the series stuck on the
+      // last non-zero value.
       walkTelemetryFields(decoded.data, '', (path, value) => {
-        (series[path] ??= []).push({ t, v: value });
+        if (typeof value === 'number') (series[path] ??= []).push({ t, v: value });
+      });
+      walkTelemetryFields(decoded.dataFull ?? decoded.data, '', (path, value) => {
+        if (typeof value === 'string') (series[path] ??= []).push({ t, v: value });
       });
     };
 
@@ -446,17 +454,26 @@ function parseWindow(s: string): number {
   return n * mult;
 }
 
+// Enum fields decode as strings (enums: String); these leaves are emitted so
+// mode/compressor state show up in the state tooltip. An allowlist rather
+// than all strings so free-text fields (config.name, wifi ssid/password)
+// never leak into the series.
+const ENUM_LEAVES = new Set(['mode', 'state', 'status', 'resetStrategy']);
+
 // Numbers chart directly; booleans (pressure alarms, budget.enabled, …) are
 // emitted as 0/1 so they show up in the state tooltip and can be charted too.
-// Enum fields decode as strings and are still skipped.
 function walkTelemetryFields(
   obj: any,
   prefix: string,
-  visit: (path: string, value: number) => void
+  visit: (path: string, value: number | string) => void
 ): void {
   if (obj === null || obj === undefined) return;
   if (typeof obj === 'number' || typeof obj === 'boolean') {
     if (prefix) visit(prefix, Number(obj));
+    return;
+  }
+  if (typeof obj === 'string') {
+    if (prefix && ENUM_LEAVES.has(prefix.split('.').pop()!)) visit(prefix, obj);
     return;
   }
   if (typeof obj !== 'object') return;

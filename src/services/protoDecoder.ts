@@ -50,6 +50,11 @@ export function initProtoDecoder(): void {
 export interface DecodedPayload {
   typeName: string;
   data: Record<string, any>;
+  // Same message rendered with defaults:true — zero-valued fields that
+  // proto3 omits from the wire (mode STANDBY, compressor ON) are present
+  // here. Only built for the winning type; scoring still uses the sparse
+  // decode so type detection is unaffected.
+  dataFull?: Record<string, any>;
 }
 
 /**
@@ -71,8 +76,9 @@ export function decodePayload(base64Payload: string): DecodedPayload | null {
   }
   if (buf.length === 0) return null;
 
-  let bestMatch: DecodedPayload | null = null;
   let bestScore = -1;
+  let bestType: protobuf.Type | null = null;
+  let bestDecoded: protobuf.Message | null = null;
 
   for (const type of candidateTypes) {
     try {
@@ -81,7 +87,8 @@ export function decodePayload(base64Payload: string): DecodedPayload | null {
       const score = scoreDecoded(obj);
       if (score > bestScore) {
         bestScore = score;
-        bestMatch = { typeName: type.fullName.replace(/^\./, ''), data: obj };
+        bestType = type;
+        bestDecoded = decoded;
       }
     } catch {
       // Wrong type, ignore
@@ -89,7 +96,12 @@ export function decodePayload(base64Payload: string): DecodedPayload | null {
   }
 
   // Demand at least one populated field to count as a real match
-  return bestScore > 0 ? bestMatch : null;
+  if (bestScore <= 0 || !bestType || !bestDecoded) return null;
+  return {
+    typeName: bestType.fullName.replace(/^\./, ''),
+    data: bestType.toObject(bestDecoded, { defaults: false, longs: Number, enums: String, bytes: String }),
+    dataFull: bestType.toObject(bestDecoded, { defaults: true, longs: Number, enums: String, bytes: String }),
+  };
 }
 
 function scoreDecoded(obj: any): number {

@@ -98,8 +98,9 @@ export interface DeviceHistoryResponse {
   messages: EnrichedMessage[];
 }
 
+// Values are numeric telemetry, 0/1 booleans, or enum strings ("COOL", "ON").
 export interface AnalyticsSeries {
-  [path: string]: Array<{ t: number; v: number }>;
+  [path: string]: Array<{ t: number; v: number | string }>;
 }
 
 export interface DeviceAnalyticsResponse {
