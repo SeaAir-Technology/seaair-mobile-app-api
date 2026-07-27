@@ -3,6 +3,7 @@ import {
   mergeSeries,
   medianInterval,
   stateAt,
+  groupState,
   GAP_FACTOR,
 } from '../../web/src/lib/chartSeries';
 
@@ -170,5 +171,66 @@ describe('stateAt', () => {
       1_000
     );
     expect(state.map((s) => s.path)).toEqual(['a.first', 'z.last']);
+  });
+});
+
+describe('groupState', () => {
+  const row = (path: string, v: number) => ({ path, v });
+
+  it('routes config paths to settings and the rest to state', () => {
+    const { settings, state } = groupState([
+      row('syncDevice2Controller.hvac.config.tempreature', 72),
+      row('syncDevice2Controller.hvac.temperture', 74),
+      row('syncDevice2Controller.hvac.highPressure', 1),
+    ]);
+    expect(settings).toEqual([{ label: 'tempreature', v: 72 }]);
+    expect(state).toEqual([
+      { label: 'highPressure', v: 1, alarm: true },
+      { label: 'temperture', v: 74 },
+    ]);
+  });
+
+  it('flags alarm fields only when their value is truthy', () => {
+    const { settings, state } = groupState([
+      row('syncDevice2Controller.hvac.highPressure', 0),
+      row('syncDevice2Controller.hvac.lowPressure', 1),
+      row('syncDevice2Controller.hvac.config.highPressureAlarm', 1),
+      row('syncDevice2Controller.hvac.config.lowPressureAlarm', 0),
+    ]);
+    expect(state).toEqual([
+      { label: 'highPressure', v: 0 },
+      { label: 'lowPressure', v: 1, alarm: true },
+    ]);
+    expect(settings).toEqual([
+      { label: 'highPressureAlarm', v: 1, alarm: true },
+      { label: 'lowPressureAlarm', v: 0 },
+    ]);
+  });
+
+  it('keeps the sub-path after config so sibling leaves stay distinct', () => {
+    const { settings } = groupState([
+      row('syncDevice2Controller.hvac.config.fan.speed', 1),
+      row('syncDevice2Controller.hvac.config.compressor.speed', 3),
+      row('syncDevice2Controller.hvac.config.highPressureAlarm', 0),
+    ]);
+    expect(settings.map((s) => s.label)).toEqual([
+      'compressor.speed',
+      'fan.speed',
+      'highPressureAlarm',
+    ]);
+  });
+
+  it('drops the controllerId leaf', () => {
+    const { settings, state } = groupState([
+      row('syncDevice2Controller.hvac.controllerId', 101),
+      row('syncDevice2Controller.hvac.voltage', 12000),
+    ]);
+    expect(settings).toEqual([]);
+    expect(state).toEqual([{ label: 'voltage', v: 12000 }]);
+  });
+
+  it('falls back to the leaf name for short paths', () => {
+    const { state } = groupState([row('hvac.humidity', 50)]);
+    expect(state).toEqual([{ label: 'humidity', v: 50 }]);
   });
 });

@@ -54,6 +54,7 @@ export function wrappedHvacHeartbeat(name: string): string {
         config: { name, mode: 1, fan: { speed: 1 }, compressor: { speed: 3 } },
         temperture: 74,
         humidity: 66,
+        highPressure: true,
       },
     },
   });

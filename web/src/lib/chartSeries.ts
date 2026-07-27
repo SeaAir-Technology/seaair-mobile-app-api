@@ -46,6 +46,58 @@ export function stateAt(
   return out;
 }
 
+export interface GroupedStateRow {
+  label: string;
+  v: number;
+  // Set when this is an alarm field whose value is currently truthy, so the
+  // tooltip can flag the row.
+  alarm?: boolean;
+}
+
+// The latched *Alarm config flags plus the real-time pressure event fields.
+function isAlarmLeaf(leaf: string): boolean {
+  return /alarm$/i.test(leaf) || leaf === 'highPressure' || leaf === 'lowPressure';
+}
+
+// Split a stateAt() snapshot into user-facing tooltip sections: anything
+// routed through a `config` node is a Setting, everything else is live State.
+// Labels are shortened — settings keep the path after `config.` (so fan.speed
+// and compressor.speed stay distinct) and state drops the message + device
+// prefix (e.g. syncDevice2Controller.hvac.). The controllerId leaf is just
+// the device's own id, so it is dropped.
+export function groupState(rows: Array<{ path: string; v: number }>): {
+  settings: GroupedStateRow[];
+  state: GroupedStateRow[];
+} {
+  const settings: GroupedStateRow[] = [];
+  const state: GroupedStateRow[] = [];
+  for (const row of rows) {
+    const segments = row.path.split('.');
+    const leaf = segments[segments.length - 1];
+    if (leaf === 'controllerId') continue;
+    const alarm = isAlarmLeaf(leaf) && row.v !== 0 ? { alarm: true } : {};
+    const configIdx = segments.indexOf('config');
+    if (configIdx >= 0 && configIdx < segments.length - 1) {
+      settings.push({
+        label: segments.slice(configIdx + 1).join('.'),
+        v: row.v,
+        ...alarm,
+      });
+    } else {
+      state.push({
+        label: segments.length > 2 ? segments.slice(2).join('.') : leaf,
+        v: row.v,
+        ...alarm,
+      });
+    }
+  }
+  const byLabel = (a: GroupedStateRow, b: GroupedStateRow) =>
+    a.label.localeCompare(b.label);
+  settings.sort(byLabel);
+  state.sort(byLabel);
+  return { settings, state };
+}
+
 // Merge two {t,v} series into one row-per-timestamp dataset suitable for
 // a recharts LineChart with two Lines. The secondary (temperature) line is
 // drawn with connectNulls, so its sparse samples stay continuous. The primary

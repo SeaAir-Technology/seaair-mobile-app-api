@@ -60,6 +60,9 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
     expect(getRange).toHaveBeenCalledTimes(1); // older history from the archive
     expect(getStreamHistory).toHaveBeenCalledTimes(1); // recent edge from Redis
     expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.temperture');
+    // Boolean fields (alarms) are emitted as 0/1 series
+    expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.highPressure');
+    expect(res.body.series['syncDevice2Controller.hvac.highPressure'][0].v).toBe(1);
     const temp = res.body.series['syncDevice2Controller.hvac.temperture'];
     expect(temp).toHaveLength(2); // one archived (old) + one live (recent), stitched
     expect(temp[0].t).toBeLessThan(temp[1].t); // sorted ascending: archive before live

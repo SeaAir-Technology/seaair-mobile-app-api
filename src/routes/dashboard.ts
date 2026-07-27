@@ -385,7 +385,7 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
       const decoded = decodePayload(payload);
       if (!decoded) return;
       scanned++;
-      walkNumericFields(decoded.data, '', (path, value) => {
+      walkTelemetryFields(decoded.data, '', (path, value) => {
         (series[path] ??= []).push({ t, v: value });
       });
     };
@@ -446,20 +446,23 @@ function parseWindow(s: string): number {
   return n * mult;
 }
 
-function walkNumericFields(
+// Numbers chart directly; booleans (pressure alarms, budget.enabled, …) are
+// emitted as 0/1 so they show up in the state tooltip and can be charted too.
+// Enum fields decode as strings and are still skipped.
+function walkTelemetryFields(
   obj: any,
   prefix: string,
   visit: (path: string, value: number) => void
 ): void {
   if (obj === null || obj === undefined) return;
-  if (typeof obj === 'number') {
-    if (prefix) visit(prefix, obj);
+  if (typeof obj === 'number' || typeof obj === 'boolean') {
+    if (prefix) visit(prefix, Number(obj));
     return;
   }
   if (typeof obj !== 'object') return;
   for (const [key, val] of Object.entries(obj)) {
     const next = prefix ? `${prefix}.${key}` : key;
-    walkNumericFields(val, next, visit);
+    walkTelemetryFields(val, next, visit);
   }
 }
 
