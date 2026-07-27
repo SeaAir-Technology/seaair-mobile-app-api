@@ -49,8 +49,8 @@ export function stateAt(
 export interface GroupedStateRow {
   label: string;
   v: number;
-  // Set when this is an alarm field whose value is currently truthy, so the
-  // tooltip can flag the row.
+  // Set on alarm-typed fields. The tooltip renders these as Yes/No, groups
+  // them after the data rows, and highlights the row when v is truthy.
   alarm?: boolean;
 }
 
@@ -75,7 +75,7 @@ export function groupState(rows: Array<{ path: string; v: number }>): {
     const segments = row.path.split('.');
     const leaf = segments[segments.length - 1];
     if (leaf === 'controllerId') continue;
-    const alarm = isAlarmLeaf(leaf) && row.v !== 0 ? { alarm: true } : {};
+    const alarm = isAlarmLeaf(leaf) ? { alarm: true } : {};
     const configIdx = segments.indexOf('config');
     if (configIdx >= 0 && configIdx < segments.length - 1) {
       settings.push({
@@ -91,10 +91,11 @@ export function groupState(rows: Array<{ path: string; v: number }>): {
       });
     }
   }
-  const byLabel = (a: GroupedStateRow, b: GroupedStateRow) =>
-    a.label.localeCompare(b.label);
-  settings.sort(byLabel);
-  state.sort(byLabel);
+  // Data rows first (alphabetical), then alarm rows grouped at the bottom.
+  const byGroup = (a: GroupedStateRow, b: GroupedStateRow) =>
+    Number(!!a.alarm) - Number(!!b.alarm) || a.label.localeCompare(b.label);
+  settings.sort(byGroup);
+  state.sort(byGroup);
   return { settings, state };
 }
 

@@ -2,8 +2,9 @@ import { stateAt, groupState } from '../lib/chartSeries';
 import type { GroupedStateRow } from '../lib/chartSeries';
 import type { AnalyticsSeries } from '../lib/types';
 
-function formatValue(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(2);
+function formatValue(r: GroupedStateRow): string {
+  if (r.alarm) return r.v !== 0 ? 'Yes' : 'No';
+  return Number.isInteger(r.v) ? String(r.v) : r.v.toFixed(2);
 }
 
 function AlarmIcon(): JSX.Element {
@@ -42,25 +43,28 @@ function Section({
       </div>
       <table>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.label}>
-              <td
-                className={`font-mono pr-3 whitespace-nowrap ${
-                  r.alarm ? 'text-red-700' : 'text-ink-500'
-                }`}
-              >
-                {r.alarm && <AlarmIcon />}
-                {r.label}
-              </td>
-              <td
-                className={`font-mono text-right whitespace-nowrap ${
-                  r.alarm ? 'text-red-700' : 'text-ink-800'
-                }`}
-              >
-                {formatValue(r.v)}
-              </td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            const active = !!r.alarm && r.v !== 0;
+            return (
+              <tr key={r.label}>
+                <td
+                  className={`font-mono pr-3 whitespace-nowrap ${
+                    active ? 'text-red-700' : 'text-ink-500'
+                  }`}
+                >
+                  {active && <AlarmIcon />}
+                  {r.label}
+                </td>
+                <td
+                  className={`font-mono text-right whitespace-nowrap ${
+                    active ? 'text-red-700' : 'text-ink-800'
+                  }`}
+                >
+                  {formatValue(r)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

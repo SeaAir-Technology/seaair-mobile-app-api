@@ -185,25 +185,29 @@ describe('groupState', () => {
     ]);
     expect(settings).toEqual([{ label: 'tempreature', v: 72 }]);
     expect(state).toEqual([
-      { label: 'highPressure', v: 1, alarm: true },
       { label: 'temperture', v: 74 },
+      { label: 'highPressure', v: 1, alarm: true },
     ]);
   });
 
-  it('flags alarm fields only when their value is truthy', () => {
+  it('flags alarm fields regardless of value and groups them last', () => {
     const { settings, state } = groupState([
-      row('syncDevice2Controller.hvac.highPressure', 0),
       row('syncDevice2Controller.hvac.lowPressure', 1),
+      row('syncDevice2Controller.hvac.voltage', 12000),
+      row('syncDevice2Controller.hvac.highPressure', 0),
       row('syncDevice2Controller.hvac.config.highPressureAlarm', 1),
+      row('syncDevice2Controller.hvac.config.fan.speed', 2),
       row('syncDevice2Controller.hvac.config.lowPressureAlarm', 0),
     ]);
     expect(state).toEqual([
-      { label: 'highPressure', v: 0 },
+      { label: 'voltage', v: 12000 },
+      { label: 'highPressure', v: 0, alarm: true },
       { label: 'lowPressure', v: 1, alarm: true },
     ]);
     expect(settings).toEqual([
+      { label: 'fan.speed', v: 2 },
       { label: 'highPressureAlarm', v: 1, alarm: true },
-      { label: 'lowPressureAlarm', v: 0 },
+      { label: 'lowPressureAlarm', v: 0, alarm: true },
     ]);
   });
 
