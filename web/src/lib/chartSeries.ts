@@ -15,6 +15,37 @@ export function medianInterval(points: Array<{ t: number }>): number | null {
   return deltas[Math.floor(deltas.length / 2)];
 }
 
+// Snapshot of every series' value as of time t: for each path, the latest
+// sample at or before t. The archive is change-point compressed, so an old
+// sample simply means the value hasn't changed since — it is still the
+// machine's state at t. Paths with no sample at or before t are omitted.
+// Relies on each series being sorted ascending by t (the API guarantees this).
+export function stateAt(
+  series: AnalyticsSeries,
+  t: number
+): Array<{ path: string; v: number; sampleT: number }> {
+  const out: Array<{ path: string; v: number; sampleT: number }> = [];
+  for (const path of Object.keys(series).sort()) {
+    const points = series[path];
+    let lo = 0;
+    let hi = points.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (points[mid].t <= t) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (found >= 0) {
+      out.push({ path, v: points[found].v, sampleT: points[found].t });
+    }
+  }
+  return out;
+}
+
 // Merge two {t,v} series into one row-per-timestamp dataset suitable for
 // a recharts LineChart with two Lines. The secondary (temperature) line is
 // drawn with connectNulls, so its sparse samples stay continuous. The primary

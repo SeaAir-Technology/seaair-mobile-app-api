@@ -5,7 +5,8 @@ import type { DeviceAnalyticsResponse } from '../lib/types';
 
 export function useDeviceAnalytics(
   controllerId: number | null,
-  windowExpr: string = '24h'
+  windowExpr: string = '24h',
+  refetchMs: number = 5_000
 ) {
   const token = useAccessToken();
   return useQuery<DeviceAnalyticsResponse>({
@@ -16,6 +17,8 @@ export function useDeviceAnalytics(
         `/devices/${controllerId}/analytics?window=${windowExpr}`
       ),
     enabled: !!token && controllerId !== null,
-    staleTime: 30_000,
+    staleTime: refetchMs,
+    refetchInterval: refetchMs,
+    refetchIntervalInBackground: false,
   });
 }

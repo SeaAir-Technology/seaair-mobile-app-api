@@ -1,6 +1,11 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // web/src can contain stale tsc-emitted .js files next to the .ts sources
+  // (gitignored build output); resolve .ts first so tests never import them.
+  resolve: {
+    extensions: ['.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
+  },
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],

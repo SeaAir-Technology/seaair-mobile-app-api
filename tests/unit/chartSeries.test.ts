@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   mergeSeries,
   medianInterval,
+  stateAt,
   GAP_FACTOR,
 } from '../../web/src/lib/chartSeries';
 
@@ -126,5 +127,48 @@ describe('mergeSeries', () => {
       SECONDARY
     );
     expect(rows).toEqual([{ t: 0, secondary: 70 }]);
+  });
+});
+
+describe('stateAt', () => {
+  it('returns the latest sample at or before t for every path', () => {
+    const state = stateAt(
+      {
+        [PRIMARY]: pts([[0, 100], [10, 110], [20, 120]]),
+        [SECONDARY]: pts([[5, 70], [15, 71]]),
+      },
+      12_000
+    );
+    expect(state).toEqual([
+      { path: PRIMARY, v: 110, sampleT: 10_000 },
+      { path: SECONDARY, v: 70, sampleT: 5_000 },
+    ]);
+  });
+
+  it('uses an exact-match sample when t lands on one', () => {
+    const state = stateAt({ [PRIMARY]: pts([[0, 100], [10, 110]]) }, 10_000);
+    expect(state).toEqual([{ path: PRIMARY, v: 110, sampleT: 10_000 }]);
+  });
+
+  it('omits paths with no sample at or before t', () => {
+    const state = stateAt(
+      {
+        [PRIMARY]: pts([[20, 120]]),
+        [SECONDARY]: pts([[5, 70]]),
+      },
+      10_000
+    );
+    expect(state).toEqual([{ path: SECONDARY, v: 70, sampleT: 5_000 }]);
+  });
+
+  it('sorts results by path name', () => {
+    const state = stateAt(
+      {
+        'z.last': pts([[0, 1]]),
+        'a.first': pts([[0, 2]]),
+      },
+      1_000
+    );
+    expect(state.map((s) => s.path)).toEqual(['a.first', 'z.last']);
   });
 });

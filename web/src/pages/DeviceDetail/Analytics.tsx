@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDeviceAnalytics } from '../../hooks/useDeviceAnalytics';
 import { Spinner } from '../../components/Spinner';
+import { ChartStateTooltip } from '../../components/ChartStateTooltip';
 import {
   LineChart,
   Line,
@@ -42,6 +43,56 @@ const COMBOS = [
 
 type ComboId = (typeof COMBOS)[number]['id'];
 
+function formatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+// "updated Ns ago" counter plus a manual refresh button, shown in the top
+// right corner of each chart card. Ticks once a second so the age counts up
+// between the 5s auto-refreshes.
+function RefreshControl({
+  updatedAt,
+  isFetching,
+  onRefresh,
+}: {
+  updatedAt: number;
+  isFetching: boolean;
+  onRefresh: () => void;
+}): JSX.Element {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const age = Math.max(0, Math.round((Date.now() - updatedAt) / 1000));
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-ink-500">
+      {updatedAt > 0 && <span>updated {formatAge(age)} ago</span>}
+      <button
+        onClick={onRefresh}
+        title="Refresh now"
+        className="p-0.5 rounded border border-ink-300 text-ink-700 hover:bg-ink-100"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={isFetching ? 'animate-spin' : undefined}
+        >
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" />
+          <path d="M13.5 2.5v3h-3" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 // The backend's analytics endpoint extracts every numeric leaf from decoded
 // protobuf payloads in the window and returns them as named series. We just
 // let the user pick which series to chart. Once the proto field semantics
@@ -55,10 +106,8 @@ export function Analytics({
   const [windowExpr, setWindowExpr] = useState<string>('24h');
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
   const [activeComboId, setActiveComboId] = useState<ComboId>(COMBOS[0].id);
-  const { data, isLoading, error } = useDeviceAnalytics(
-    controllerId,
-    windowExpr
-  );
+  const { data, isLoading, error, refetch, dataUpdatedAt, isFetching } =
+    useDeviceAnalytics(controllerId, windowExpr);
 
   const allSeries = data?.seriesNames || [];
   const active =
@@ -117,7 +166,14 @@ export function Analytics({
             ))}
           </div>
           <div className="bg-white border border-ink-200 rounded p-3">
-            <div className="text-xs text-ink-500 mb-2">{activeCombo.label}</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-ink-500">{activeCombo.label}</div>
+              <RefreshControl
+                updatedAt={dataUpdatedAt}
+                isFetching={isFetching}
+                onRefresh={() => refetch()}
+              />
+            </div>
             {comboData.length === 0 ? (
               <div className="text-xs text-ink-500 py-8 text-center">
                 No samples for{' '}
@@ -152,9 +208,7 @@ export function Analytics({
                         tick={{ fontSize: 11, fill: activeCombo.secondary.color }}
                       />
                       <Tooltip
-                        labelFormatter={(t) =>
-                          new Date(t as number).toLocaleString()
-                        }
+                        content={<ChartStateTooltip series={data.series} />}
                       />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                       <Line
@@ -227,7 +281,14 @@ export function Analytics({
           </div>
           {active && chartData.length > 0 && (
             <div className="bg-white border border-ink-200 rounded p-3">
-              <div className="text-xs text-ink-500 mb-2 font-mono">{active}</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs text-ink-500 font-mono">{active}</div>
+                <RefreshControl
+                  updatedAt={dataUpdatedAt}
+                  isFetching={isFetching}
+                  onRefresh={() => refetch()}
+                />
+              </div>
               <div style={{ width: '100%', height: 280 }}>
                 <ResponsiveContainer>
                   <LineChart data={chartData}>
@@ -244,9 +305,7 @@ export function Analytics({
                     />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip
-                      labelFormatter={(t) =>
-                        new Date(t as number).toLocaleString()
-                      }
+                      content={<ChartStateTooltip series={data.series} />}
                     />
                     <Line
                       type="monotone"
