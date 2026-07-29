@@ -60,6 +60,19 @@ export function wrappedHvacHeartbeat(name: string, mode: number = 1): string {
   });
 }
 
+/** A wrapped heartbeat with no sync version set — matches current shipping
+ * firmware, which doesn't populate SyncDevice2Controller.version. */
+export function versionlessHvacHeartbeat(name: string): string {
+  return encodeBase64('BLE.Msg', {
+    syncDevice2Controller: {
+      hvac: {
+        config: { name, mode: 1 },
+        temperture: 74,
+      },
+    },
+  });
+}
+
 /** A BM.Utility heartbeat carrying a config name. */
 export function utilityHeartbeat(name: string): string {
   return encodeBase64('BM.Utility', {

@@ -483,7 +483,12 @@ function walkTelemetryFields(
     return;
   }
   if (typeof obj === 'string') {
-    if (prefix && STRING_LEAVES.has(prefix.split('.').pop()!)) visit(prefix, obj);
+    // Skip empty strings: the defaults:true view renders unset proto3 string
+    // fields as "" (e.g. a firmware that doesn't send version), which would
+    // otherwise show up as a blank row in the dashboard tooltip.
+    if (obj !== '' && prefix && STRING_LEAVES.has(prefix.split('.').pop()!)) {
+      visit(prefix, obj);
+    }
     return;
   }
   if (typeof obj !== 'object') return;

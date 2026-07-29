@@ -12,7 +12,7 @@ vi.mock('../../src/middleware/requireDashboardAdmin', () => ({
 
 import { createApp } from '../../src/app';
 import { RateLimiter } from '../../src/rateLimiter';
-import { wrappedHvacHeartbeat } from '../helpers/proto';
+import { wrappedHvacHeartbeat, versionlessHvacHeartbeat } from '../helpers/proto';
 
 const SAVED = { broker: process.env.MESSAGE_BROKER, archive: process.env.ARCHIVE_ENABLED };
 
@@ -91,6 +91,24 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('STANDBY');
+  });
+
+  it('omits unset string fields instead of emitting blank series values', async () => {
+    process.env.ARCHIVE_ENABLED = 'false';
+    const getStreamHistory = vi.fn(async () => [
+      // Heartbeat without a version — the defaults:true view renders it as
+      // "" and it must not become a blank tooltip row
+      { streamId: `${Date.now()}-0`, protobufPayload: versionlessHvacHeartbeat('Cabin Air') },
+    ]);
+    app.locals.messageBroker = { getStreamHistory };
+    app.locals.archiveStore = { getRange: vi.fn() };
+
+    const res = await request(app)
+      .get('/dashboard/api/devices/101/analytics')
+      .query({ window: '24h' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.series['syncDevice2Controller.version']).toBeUndefined();
   });
 
   it('falls back to the Redis live window when archiving is disabled', async () => {
