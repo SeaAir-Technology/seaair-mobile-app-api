@@ -66,6 +66,8 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
     // Enum fields (mode etc.) are emitted as string series
     expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.config.mode');
     expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('COOL');
+    // Firmware version string rides along for the state tooltip
+    expect(res.body.series['syncDevice2Controller.version'][0].v).toBe('1.2.3');
     const temp = res.body.series['syncDevice2Controller.hvac.temperture'];
     expect(temp).toHaveLength(2); // one archived (old) + one live (recent), stitched
     expect(temp[0].t).toBeLessThan(temp[1].t); // sorted ascending: archive before live

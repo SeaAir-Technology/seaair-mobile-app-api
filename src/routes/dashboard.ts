@@ -23,6 +23,7 @@ import { getBrokerType } from '../messageBroker';
 import {
   decodePayload,
   extractDeviceName,
+  extractFirmwareVersion,
   parseFilterParam,
   evaluateFilters,
   PayloadFilter,
@@ -134,7 +135,12 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
       activeBeaconsResult.beacons.map((b) => b.controllerId)
     );
 
-    type Lookup = { controllerId: number; lastSeenMs: number; name?: string };
+    type Lookup = {
+      controllerId: number;
+      lastSeenMs: number;
+      name?: string;
+      firmwareVersion?: string;
+    };
     const lookups = await Promise.all(
       fw2mobileKeys.map(async (key): Promise<Lookup | null> => {
         const idStr = key.split(':')[2];
@@ -145,17 +151,20 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
         const msg = history[0];
         const tsMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
         if (tsMs < cutoff) return null;
-        const name = extractDeviceName(decodePayload(msg.protobufPayload));
-        return { controllerId, lastSeenMs: tsMs, name };
+        const decoded = decodePayload(msg.protobufPayload);
+        const name = extractDeviceName(decoded);
+        const firmwareVersion = extractFirmwareVersion(decoded);
+        return { controllerId, lastSeenMs: tsMs, name, firmwareVersion };
       })
     );
 
     const now = Date.now();
     const devices = lookups
       .filter((x): x is Lookup => x !== null)
-      .map(({ controllerId, lastSeenMs, name }) => ({
+      .map(({ controllerId, lastSeenMs, name, firmwareVersion }) => ({
         controllerId,
         name,
+        firmwareVersion,
         lastSeenAt: new Date(lastSeenMs).toISOString(),
         ageMs: now - lastSeenMs,
         alive: now - lastSeenMs <= FRESHNESS_MS,
@@ -454,11 +463,12 @@ function parseWindow(s: string): number {
   return n * mult;
 }
 
-// Enum fields decode as strings (enums: String); these leaves are emitted so
-// mode/compressor state show up in the state tooltip. An allowlist rather
-// than all strings so free-text fields (config.name, wifi ssid/password)
-// never leak into the series.
-const ENUM_LEAVES = new Set(['mode', 'state', 'status', 'resetStrategy']);
+// String leaves emitted into the series: enum fields (decoded as strings via
+// enums: String) so mode/compressor state show up in the state tooltip, plus
+// the firmware-controlled sync version string. An allowlist rather than all
+// strings so free-text fields (config.name, wifi ssid/password) never leak
+// into the series.
+const STRING_LEAVES = new Set(['mode', 'state', 'status', 'resetStrategy', 'version']);
 
 // Numbers chart directly; booleans (pressure alarms, budget.enabled, …) are
 // emitted as 0/1 so they show up in the state tooltip and can be charted too.
@@ -473,7 +483,7 @@ function walkTelemetryFields(
     return;
   }
   if (typeof obj === 'string') {
-    if (prefix && ENUM_LEAVES.has(prefix.split('.').pop()!)) visit(prefix, obj);
+    if (prefix && STRING_LEAVES.has(prefix.split('.').pop()!)) visit(prefix, obj);
     return;
   }
   if (typeof obj !== 'object') return;

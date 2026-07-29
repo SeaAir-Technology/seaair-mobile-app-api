@@ -233,6 +233,14 @@ function DeviceRow({
               <span className="font-mono">Controller #{device.controllerId}</span>
             )}
           </span>
+          {device.firmwareVersion && (
+            <span
+              className="font-mono text-[10px] text-ink-500 border border-ink-200 rounded px-1 py-0.5 shrink-0"
+              title="Board firmware version from the latest heartbeat"
+            >
+              fw {device.firmwareVersion}
+            </span>
+          )}
           <span
             className="ml-auto text-xs text-ink-500 shrink-0"
             title={formatTimestamp(device.lastSeenAt)}

@@ -76,6 +76,10 @@ describe('GET /dashboard/api/devices', () => {
     const byId = Object.fromEntries(res.body.devices.map((d: any) => [d.controllerId, d]));
     expect(byId[101].name).toBe('Cabin Air');
     expect(byId[202].name).toBe('Bilge Sensor');
+    // Firmware version rides along from the sync wrapper; the bare Utility
+    // heartbeat has no version field.
+    expect(byId[101].firmwareVersion).toBe('1.2.3');
+    expect(byId[202].firmwareVersion).toBeUndefined();
   });
 
   it('omits the name when the heartbeat has none', async () => {

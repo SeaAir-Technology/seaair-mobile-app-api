@@ -54,6 +54,8 @@ export interface DeviceSummary {
   controllerId: number;
   /** Human-readable name from the latest heartbeat config, if the device set one. */
   name?: string;
+  /** Board firmware version from the latest sync heartbeat, e.g. "1.2.3". */
+  firmwareVersion?: string;
   lastSeenAt: string;
   ageMs: number;
   alive: boolean;

@@ -5,6 +5,7 @@ import { History } from './History';
 import { Analytics } from './Analytics';
 import { useMarkAllReceived } from '../../hooks/useDeviceMutations';
 import { useDeviceQueue } from '../../hooks/useDeviceQueue';
+import { useDeviceState } from '../../hooks/useDeviceState';
 import type { PayloadFilter } from '../../lib/types';
 
 // Overview combines the formatted current-state summary with the analytics
@@ -33,8 +34,11 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-xs text-ink-500 mb-1">Controller</div>
-            <div className="font-mono text-lg text-ink-900 mb-2">
-              #{controllerId}
+            <div className="flex items-baseline gap-2 mb-2">
+              <span className="font-mono text-lg text-ink-900">
+                #{controllerId}
+              </span>
+              <FirmwareBadge controllerId={controllerId} />
             </div>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -76,6 +80,29 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
         )}
       </div>
     </div>
+  );
+}
+
+// Board firmware version from the latest sync heartbeat. The current-state
+// endpoint already ships the full decoded payload (and this shares its
+// react-query cache entry with CurrentState, so no extra requests), we just
+// read SyncDevice2Controller.version out of it.
+function FirmwareBadge({ controllerId }: { controllerId: number }): JSX.Element | null {
+  const { data } = useDeviceState(controllerId);
+  const d = data?.latest?.decoded?.data as Record<string, any> | undefined;
+  const version = [
+    d?.syncDevice2Controller?.version,
+    d?.syncController2Device?.version,
+    d?.version,
+  ].find((v) => typeof v === 'string' && v.trim() !== '');
+  if (!version) return null;
+  return (
+    <span
+      className="font-mono text-xs text-ink-600 border border-ink-200 rounded px-1.5 py-0.5"
+      title="Board firmware version from the latest heartbeat"
+    >
+      fw {version}
+    </span>
   );
 }
 

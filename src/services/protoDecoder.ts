@@ -153,6 +153,23 @@ export function extractDeviceName(decoded: DecodedPayload | null): string | unde
   return undefined;
 }
 
+// Firmware version string from a sync heartbeat (e.g. "1.2.3"). Lives at
+// SyncDevice2Controller.version (fw→mobile) / SyncController2Device.version
+// inside BLE.Msg, or at the root for a bare sync decode.
+export function extractFirmwareVersion(decoded: DecodedPayload | null): string | undefined {
+  if (!decoded) return undefined;
+  const d = decoded.data as Record<string, any>;
+  const candidates = [
+    d?.syncDevice2Controller?.version,
+    d?.syncController2Device?.version,
+    d?.version,
+  ];
+  for (const v of candidates) {
+    if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  }
+  return undefined;
+}
+
 export type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'exists';
 
 export interface PayloadFilter {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   decodePayload,
   extractDeviceName,
+  extractFirmwareVersion,
   getByPath,
   parseFilterParam,
   evaluateFilter,
@@ -88,6 +89,24 @@ describe('decodePayload (end-to-end with real protos)', () => {
   it('returns null for empty / undecodable input', () => {
     expect(decodePayload('')).toBeNull();
     expect(decodePayload('!!!not base64!!!')).toBeNull();
+  });
+});
+
+describe('extractFirmwareVersion', () => {
+  it('reads the version from a BLE.Msg-wrapped sync heartbeat', () => {
+    const result = decodePayload(wrappedHvacHeartbeat('Salon HVAC'));
+    expect(extractFirmwareVersion(result)).toBe('1.2.3');
+  });
+
+  it('reads a root-level version from a bare sync decode', () => {
+    expect(
+      extractFirmwareVersion(decoded({ version: '2.0.1', hvac: {} }))
+    ).toBe('2.0.1');
+  });
+
+  it('returns undefined when no version is present', () => {
+    expect(extractFirmwareVersion(decodePayload(utilityHeartbeat('Bilge')))).toBeUndefined();
+    expect(extractFirmwareVersion(null)).toBeUndefined();
   });
 });
 
