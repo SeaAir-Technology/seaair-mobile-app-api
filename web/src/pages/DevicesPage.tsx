@@ -215,7 +215,7 @@ function DeviceRow({
           {device.beacon && (
             <span
               className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-300 rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0"
-              title="Firmware has raised a beacon flag in its latest heartbeat"
+              title="A customer has raised a help beacon for this machine"
             >
               <BeaconIcon className="text-amber-700" />
               Beacon raised
@@ -243,9 +243,9 @@ function DeviceRow({
           )}
           <span
             className="ml-auto text-xs text-ink-500 shrink-0"
-            title={formatTimestamp(device.lastSeenAt)}
+            title={device.lastSeenAt ? formatTimestamp(device.lastSeenAt) : 'No heartbeat ever received'}
           >
-            {formatRelativeTime(device.lastSeenAt)}
+            {device.lastSeenAt ? formatRelativeTime(device.lastSeenAt) : 'never seen'}
           </span>
         </div>
       </button>

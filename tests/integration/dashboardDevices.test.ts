@@ -103,6 +103,38 @@ describe('GET /dashboard/api/devices', () => {
     expect(res.body.devices.slice(1).map((d: any) => d.controllerId)).toEqual([101, 404]);
   });
 
+  it('always lists a beacon-active controller even when its heartbeat is outside the window', async () => {
+    // Regression: a customer beacons precisely when their machine is in
+    // trouble — often offline. The beacon row must never be invisible.
+    mockBeacons.mockResolvedValue({ beacons: [{ controllerId: 303 }] });
+    mountDevices();
+
+    const res = await request(app).get('/dashboard/api/devices');
+    const dev303 = res.body.devices.find((d: any) => d.controllerId === 303);
+    expect(dev303).toBeDefined();
+    expect(dev303.beacon).toBe(true);
+    expect(dev303.alive).toBe(false);
+    // Metadata still comes from its last stored heartbeat, however old.
+    expect(dev303.name).toBe('Old Device');
+    expect(dev303.lastSeenAt).toBeTruthy();
+    // Floated to the top ahead of all non-beacon rows.
+    expect(res.body.devices[0].controllerId).toBe(303);
+  });
+
+  it('lists a beacon-active controller that has never heartbeated at all', async () => {
+    mockBeacons.mockResolvedValue({ beacons: [{ controllerId: 999 }] });
+    mountDevices();
+
+    const res = await request(app).get('/dashboard/api/devices');
+    const dev999 = res.body.devices.find((d: any) => d.controllerId === 999);
+    expect(dev999).toBeDefined();
+    expect(dev999.beacon).toBe(true);
+    expect(dev999.alive).toBe(false);
+    expect(dev999.lastSeenAt).toBeNull();
+    expect(dev999.ageMs).toBeNull();
+    expect(res.body.devices[0].controllerId).toBe(999);
+  });
+
   it('excludes devices last seen before the lookback window', async () => {
     mountDevices();
     const res = await request(app).get('/dashboard/api/devices');

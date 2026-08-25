@@ -56,8 +56,10 @@ export interface DeviceSummary {
   name?: string;
   /** Board firmware version from the latest sync heartbeat, e.g. "1.2.3". */
   firmwareVersion?: string;
-  lastSeenAt: string;
-  ageMs: number;
+  /** Null when the controller has never heartbeated (listed only because a
+   *  beacon is active on it). */
+  lastSeenAt: string | null;
+  ageMs: number | null;
   alive: boolean;
   beacon: boolean;
 }
