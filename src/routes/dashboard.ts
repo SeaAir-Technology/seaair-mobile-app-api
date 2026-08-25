@@ -165,15 +165,54 @@ router.get('/devices', async (req: Request, res: Response): Promise<void> => {
         controllerId,
         name,
         firmwareVersion,
-        lastSeenAt: new Date(lastSeenMs).toISOString(),
-        ageMs: now - lastSeenMs,
+        lastSeenAt: new Date(lastSeenMs).toISOString() as string | null,
+        ageMs: (now - lastSeenMs) as number | null,
         alive: now - lastSeenMs <= FRESHNESS_MS,
         beacon: activeBeaconControllers.has(controllerId),
       }));
 
+    // A raised beacon must NEVER be invisible. A customer beacons precisely
+    // when their machine is in trouble — often powered down or offline (and
+    // therefore outside the heartbeat window above). Add a row for every
+    // beacon-active controller the window missed, using its last stored
+    // heartbeat (any age) for name/firmware/last-seen when one exists.
+    const listed = new Set(devices.map((d) => d.controllerId));
+    const missingBeaconIds = [...activeBeaconControllers].filter(
+      (id) => !listed.has(id)
+    );
+    const beaconRows = await Promise.all(
+      missingBeaconIds.map(async (controllerId) => {
+        let lastSeenMs = 0;
+        let name: string | undefined;
+        let firmwareVersion: string | undefined;
+        try {
+          const history = await broker.getStreamHistory(controllerId, 'fw2mobile', 1);
+          if (history.length > 0) {
+            const msg = history[0];
+            lastSeenMs = msg.streamId ? parseInt(msg.streamId.split('-')[0], 10) : 0;
+            const decoded = decodePayload(msg.protobufPayload);
+            name = extractDeviceName(decoded);
+            firmwareVersion = extractFirmwareVersion(decoded);
+          }
+        } catch {
+          // No stream history at all — still list the beacon row.
+        }
+        return {
+          controllerId,
+          name,
+          firmwareVersion,
+          lastSeenAt: lastSeenMs > 0 ? new Date(lastSeenMs).toISOString() : null,
+          ageMs: lastSeenMs > 0 ? now - lastSeenMs : null,
+          alive: false,
+          beacon: true,
+        };
+      })
+    );
+    devices.push(...beaconRows);
+
     devices.sort((a, b) => {
       if (a.beacon !== b.beacon) return a.beacon ? -1 : 1;
-      return a.ageMs - b.ageMs;
+      return (a.ageMs ?? Number.MAX_SAFE_INTEGER) - (b.ageMs ?? Number.MAX_SAFE_INTEGER);
     });
 
     res.json({
