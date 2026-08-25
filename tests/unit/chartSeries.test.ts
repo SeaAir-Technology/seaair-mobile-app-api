@@ -213,6 +213,23 @@ describe('groupState', () => {
     ]);
   });
 
+  it('flags every voltage alarm field so chart markers and tooltip styling never regress', () => {
+    const { settings, state } = groupState([
+      row('syncDevice2Controller.hvac.lowVoltage', 1),
+      row('syncDevice2Controller.hvac.highVoltage', 0),
+      row('syncDevice2Controller.hvac.config.lowVoltageAlarm', 1),
+      row('syncDevice2Controller.hvac.config.highVoltageAlarm', 0),
+    ]);
+    expect(state).toEqual([
+      { label: 'highVoltage', v: 0, alarm: true },
+      { label: 'lowVoltage', v: 1, alarm: true },
+    ]);
+    expect(settings).toEqual([
+      { label: 'highVoltageAlarm', v: 0, alarm: true },
+      { label: 'lowVoltageAlarm', v: 1, alarm: true },
+    ]);
+  });
+
   it('keeps the sub-path after config so sibling leaves stay distinct', () => {
     const { settings } = groupState([
       row('syncDevice2Controller.hvac.config.fan.speed', 1),
@@ -288,6 +305,18 @@ describe('modeSegments', () => {
 });
 
 describe('alarmEdges', () => {
+  it('marks transitions on voltage alarm series', () => {
+    const edges = alarmEdges({
+      'syncDevice2Controller.hvac.config.lowVoltageAlarm': [
+        { t: 1, v: 0 },
+        { t: 5, v: 1 },
+        { t: 9, v: 0 },
+        { t: 12, v: 1 },
+      ],
+    });
+    expect(edges).toEqual([5, 12]);
+  });
+
   it('marks inactive-to-active transitions across all alarm series', () => {
     const edges = alarmEdges({
       'syncDevice2Controller.hvac.compressorShutdown': [
