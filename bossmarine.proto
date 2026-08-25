@@ -69,14 +69,16 @@ message Hvac {
     HvacConfig      config               = 1;
     uint32          temperture           = 2; // F
     uint32          humidity             = 3; // %s
-    uint32          voltage              = 4; // mV
+    uint32          voltage              = 4; // 12V bus voltage in mV (populated on digipot boards only)
     float           powerRate            = 5;
     float           powerTotal           = 6;
     optional uint64 controller_id        = 7;  // Unique controller board identifier from ESP eFuse MAC
-    optional bool   high_pressure        = 8;  // High pressure event detected (real-time)
+    optional bool   compressor_shutdown  = 8;  // Compressor driver shutdown detected (real-time; formerly high_pressure)
     optional bool   low_pressure         = 9;  // Low pressure event detected (real-time)
     optional bool   admin_pin_set        = 10; // Whether admin PIN is configured on this controller
     optional uint32 budget_seconds_since_reset = 11; // Seconds elapsed in current budget reset window (read-only)
+    optional bool   low_voltage          = 12; // Bus voltage below low limit (real-time)
+    optional bool   high_voltage         = 13; // Bus voltage above high limit (real-time)
 }
 
 message Controller2Hvac {
@@ -119,8 +121,10 @@ message HvacConfig {
     uint32          tempreature          = 5;
     uint32          humidity             = 6;
     optional string name                 = 7;
-    optional bool   high_pressure_alarm  = 8; // Set to false to clear the latched high pressure alarm
+    optional bool   compressor_shutdown_alarm = 8; // Set to false to clear the latched compressor shutdown alarm (formerly high_pressure_alarm)
     optional bool   low_pressure_alarm   = 9; // Set to false to clear the latched low pressure alarm
+    optional bool   high_voltage_alarm   = 10; // Set to false to clear the latched high voltage alarm
+    optional bool   low_voltage_alarm    = 11; // Set to false to clear the latched low voltage alarm
 }
 
 message UtilityConfig {

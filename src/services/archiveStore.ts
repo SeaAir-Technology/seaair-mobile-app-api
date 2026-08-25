@@ -172,16 +172,23 @@ export function extractTelemetry(decoded: DecodedPayload | null): Telemetry | nu
     set('voltageMv', num(node.voltage));
     set('powerRate', num(node.powerRate));
     set('powerTotal', num(node.powerTotal));
-    set('budgetSecondsSinceReset', num(node.budget_seconds_since_reset));
+    set('budgetSecondsSinceReset', num(node.budgetSecondsSinceReset));
     const cfg = node.config;
     if (cfg && typeof cfg === 'object') {
       set('fanSpeed', num(cfg.fan?.speed));
       set('compressorSpeed', num(cfg.compressor?.speed));
       if (cfg.mode !== undefined) state.mode = cfg.mode;
       if (cfg.compressor?.state !== undefined) state.compressorState = cfg.compressor.state;
+      // Latched alarms (decoder emits camelCase; the old snake_case checks never matched)
+      if (cfg.compressorShutdownAlarm !== undefined) state.compressorShutdownAlarm = cfg.compressorShutdownAlarm;
+      if (cfg.lowPressureAlarm !== undefined) state.lowPressureAlarm = cfg.lowPressureAlarm;
+      if (cfg.lowVoltageAlarm !== undefined) state.lowVoltageAlarm = cfg.lowVoltageAlarm;
+      if (cfg.highVoltageAlarm !== undefined) state.highVoltageAlarm = cfg.highVoltageAlarm;
     }
-    if (node.high_pressure !== undefined) state.highPressure = node.high_pressure;
-    if (node.low_pressure !== undefined) state.lowPressure = node.low_pressure;
+    if (node.compressorShutdown !== undefined) state.compressorShutdown = node.compressorShutdown;
+    if (node.lowPressure !== undefined) state.lowPressure = node.lowPressure;
+    if (node.lowVoltage !== undefined) state.lowVoltage = node.lowVoltage;
+    if (node.highVoltage !== undefined) state.highVoltage = node.highVoltage;
     return { kind: 'hvac', measures, state };
   }
 

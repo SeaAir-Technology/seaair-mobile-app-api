@@ -83,6 +83,35 @@ describe('extractTelemetry', () => {
     expect(t?.measures.temperatureF).toBe(68);
   });
 
+  it('captures alarm state so alarm transitions create archive change-points', () => {
+    // Regression: the extraction used snake_case names while the decoder emits
+    // camelCase, so alarms never reached the fingerprint and their transitions
+    // could be compressed out of deep history.
+    const payload = encodeBase64('BM.Hvac', {
+      config: {
+        name: 'X',
+        mode: 1,
+        compressorShutdownAlarm: true,
+        lowPressureAlarm: false,
+        lowVoltageAlarm: true,
+        highVoltageAlarm: false,
+      },
+      temperture: 72,
+      humidity: 55,
+      voltage: 11650,
+      compressorShutdown: true,
+      lowVoltage: true,
+    });
+    const t = extractTelemetry(decodePayload(payload));
+    expect(t?.state.compressorShutdown).toBe(true);
+    expect(t?.state.lowVoltage).toBe(true);
+    expect(t?.state.compressorShutdownAlarm).toBe(true);
+    expect(t?.state.lowVoltageAlarm).toBe(true);
+    expect(t?.state.lowPressureAlarm).toBe(false);
+    expect(t?.state.highVoltageAlarm).toBe(false);
+    expect(t?.measures.voltageMv).toBe(11650);
+  });
+
   it('returns null for a non-telemetry payload (command)', () => {
     expect(extractTelemetry(decodePayload(legacyDeviceInfoRequest()))).toBeNull();
     expect(extractTelemetry(null)).toBeNull();
