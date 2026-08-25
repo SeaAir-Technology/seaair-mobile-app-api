@@ -68,7 +68,13 @@ export interface GroupedStateRow {
 
 // The latched *Alarm config flags plus the real-time pressure event fields.
 function isAlarmLeaf(leaf: string): boolean {
-  return /alarm$/i.test(leaf) || leaf === 'highPressure' || leaf === 'lowPressure';
+  return (
+    /alarm$/i.test(leaf) ||
+    leaf === 'compressorShutdown' ||
+    leaf === 'lowPressure' ||
+    leaf === 'lowVoltage' ||
+    leaf === 'highVoltage'
+  );
 }
 
 // Split a stateAt() snapshot into user-facing tooltip sections: anything

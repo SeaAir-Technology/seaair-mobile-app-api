@@ -61,8 +61,8 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
     expect(getStreamHistory).toHaveBeenCalledTimes(1); // recent edge from Redis
     expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.temperture');
     // Boolean fields (alarms) are emitted as 0/1 series
-    expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.highPressure');
-    expect(res.body.series['syncDevice2Controller.hvac.highPressure'][0].v).toBe(1);
+    expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.compressorShutdown');
+    expect(res.body.series['syncDevice2Controller.hvac.compressorShutdown'][0].v).toBe(1);
     // Enum fields (mode etc.) are emitted as string series
     expect(res.body.seriesNames).toContain('syncDevice2Controller.hvac.config.mode');
     expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('COOL');

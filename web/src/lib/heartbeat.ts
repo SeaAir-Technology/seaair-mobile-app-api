@@ -88,8 +88,13 @@ export function summarizeHeartbeat(decoded: DecodedPayload | null): HeartbeatSum
     push('Power total', total !== undefined ? total.toFixed(1) : undefined);
     const mv = num(n.voltage);
     push('Voltage', mv !== undefined ? `${(mv / 1000).toFixed(2)} V` : undefined);
-    if (n.high_pressure === true) alarms.push('High pressure');
-    if (n.low_pressure === true) alarms.push('Low pressure');
+    // Decoder emits camelCase (the old snake_case checks never matched).
+    // A chip shows for a real-time event or a latched alarm.
+    const alarmCfg = n.config ?? {};
+    if (n.compressorShutdown === true || alarmCfg.compressorShutdownAlarm === true) alarms.push('Compressor shutdown');
+    if (n.lowPressure === true || alarmCfg.lowPressureAlarm === true) alarms.push('Low pressure');
+    if (n.lowVoltage === true || alarmCfg.lowVoltageAlarm === true) alarms.push('Low voltage');
+    if (n.highVoltage === true || alarmCfg.highVoltageAlarm === true) alarms.push('High voltage');
   } else {
     push('Temperature', num(n.temperature) !== undefined ? `${num(n.temperature)}°F` : undefined);
     push('Humidity', num(n.humidity) !== undefined ? `${num(n.humidity)}%` : undefined);
