@@ -3,7 +3,8 @@ import {
   mergeSeries,
   medianInterval,
   stateAt,
-  groupState,
+  cockpitAt,
+  latestT,
   modeSegments,
   alarmEdges,
   GAP_FACTOR,
@@ -176,81 +177,89 @@ describe('stateAt', () => {
   });
 });
 
-describe('groupState', () => {
-  const row = (path: string, v: number) => ({ path, v });
+describe('cockpitAt', () => {
+  const P = 'syncDevice2Controller.hvac';
+  const one = (v: number | string) => [{ t: 1_000, v }];
 
-  it('routes config paths to settings and the rest to state', () => {
-    const { settings, state } = groupState([
-      row('syncDevice2Controller.hvac.config.tempreature', 72),
-      row('syncDevice2Controller.hvac.temperture', 74),
-      row('syncDevice2Controller.hvac.compressorShutdown', 1),
-    ]);
-    // Labels fix the proto's two misspellings of temperature
-    expect(settings).toEqual([{ label: 'temperature', v: 72 }]);
-    expect(state).toEqual([
-      { label: 'temperature', v: 74 },
-      { label: 'compressorShutdown', v: 1, alarm: true },
-    ]);
+  it('picks known leaves off the snapshot by path suffix', () => {
+    const c = cockpitAt(
+      {
+        [`${P}.config.mode`]: one('COOL'),
+        [`${P}.config.tempreature`]: one(72),
+        [`${P}.config.humidity`]: one(65),
+        [`${P}.config.fan.speed`]: one(3),
+        [`${P}.config.compressor.speed`]: one(5),
+        [`${P}.config.compressor.state`]: one('ON'),
+        [`${P}.temperture`]: one(74),
+        [`${P}.humidity`]: one(66),
+        [`${P}.powerRate`]: one(4.2),
+        [`${P}.powerTotal`]: one(128.5),
+        [`${P}.voltage`]: one(14.18),
+        ['syncDevice2Controller.version']: one('3.1'),
+      },
+      2_000
+    );
+    expect(c).toEqual({
+      at: 2_000,
+      mode: 'COOL',
+      setpoint: 72,
+      targetHumidity: 65,
+      fanSpeed: 3,
+      compressorSpeed: 5,
+      compressorState: 'ON',
+      temp: 74,
+      humidity: 66,
+      powerRate: 4.2,
+      powerTotal: 128.5,
+      voltage: 14.18,
+      version: '3.1',
+      alarms: [],
+    });
   });
 
-  it('flags alarm fields regardless of value and groups them last', () => {
-    const { settings, state } = groupState([
-      row('syncDevice2Controller.hvac.lowPressure', 1),
-      row('syncDevice2Controller.hvac.voltage', 12000),
-      row('syncDevice2Controller.hvac.compressorShutdown', 0),
-      row('syncDevice2Controller.hvac.config.compressorShutdownAlarm', 1),
-      row('syncDevice2Controller.hvac.config.fan.speed', 2),
-      row('syncDevice2Controller.hvac.config.lowPressureAlarm', 0),
-    ]);
-    expect(state).toEqual([
-      { label: 'voltage', v: 12000 },
-      { label: 'compressorShutdown', v: 0, alarm: true },
-      { label: 'lowPressure', v: 1, alarm: true },
-    ]);
-    expect(settings).toEqual([
-      { label: 'fan.speed', v: 2 },
-      { label: 'compressorShutdownAlarm', v: 1, alarm: true },
-      { label: 'lowPressureAlarm', v: 0, alarm: true },
-    ]);
+  it('collects alarms from real-time events and latched flags, deduped', () => {
+    const c = cockpitAt(
+      {
+        [`${P}.lowPressure`]: one(1),
+        [`${P}.config.lowPressureAlarm`]: one(1),
+        [`${P}.config.compressorShutdownAlarm`]: one(1),
+        [`${P}.highVoltage`]: one(0),
+        [`${P}.temperture`]: one(74),
+      },
+      2_000
+    );
+    expect(c.alarms).toEqual(['Compressor shutdown', 'Low pressure']);
   });
 
-  it('keeps the sub-path after config so sibling leaves stay distinct', () => {
-    const { settings } = groupState([
-      row('syncDevice2Controller.hvac.config.fan.speed', 1),
-      row('syncDevice2Controller.hvac.config.compressor.speed', 3),
-      row('syncDevice2Controller.hvac.config.compressorShutdownAlarm', 0),
-    ]);
-    expect(settings.map((s) => s.label)).toEqual([
-      'compressor.speed',
-      'fan.speed',
-      'compressorShutdownAlarm',
-    ]);
+  it('treats a zero setpoint as unset and leaves unknown fields undefined', () => {
+    const c = cockpitAt({ [`${P}.config.tempreature`]: one(0) }, 2_000);
+    expect(c.setpoint).toBeUndefined();
+    expect(c.temp).toBeUndefined();
+    expect(c.mode).toBeUndefined();
   });
 
-  it('drops the controllerId leaf', () => {
-    const { settings, state } = groupState([
-      row('syncDevice2Controller.hvac.controllerId', 101),
-      row('syncDevice2Controller.hvac.voltage', 12000),
-    ]);
-    expect(settings).toEqual([]);
-    expect(state).toEqual([{ label: 'voltage', v: 12000 }]);
+  it('only sees samples at or before t', () => {
+    const c = cockpitAt(
+      { [`${P}.temperture`]: [{ t: 1_000, v: 70 }, { t: 5_000, v: 80 }] },
+      3_000
+    );
+    expect(c.temp).toBe(70);
+  });
+});
+
+describe('latestT', () => {
+  it('returns the newest sample timestamp across all series', () => {
+    expect(
+      latestT({
+        a: [{ t: 1_000, v: 1 }, { t: 4_000, v: 2 }],
+        b: [{ t: 6_000, v: 3 }],
+      })
+    ).toBe(6_000);
   });
 
-  it('falls back to the leaf name for short paths', () => {
-    const { state } = groupState([row('hvac.humidity', 50)]);
-    expect(state).toEqual([{ label: 'humidity', v: 50 }]);
-  });
-
-  it('carries enum string values through', () => {
-    const { settings, state } = groupState([
-      { path: 'syncDevice2Controller.hvac.config.mode', v: 'COOL' },
-      { path: 'syncDevice2Controller.hvac.config.compressor.state', v: 'ON' },
-    ]);
-    expect(settings).toEqual([
-      { label: 'compressor.state', v: 'ON' },
-      { label: 'mode', v: 'COOL' },
-    ]);
-    expect(state).toEqual([]);
+  it('returns null with no samples', () => {
+    expect(latestT({})).toBeNull();
+    expect(latestT({ a: [] })).toBeNull();
   });
 });
 

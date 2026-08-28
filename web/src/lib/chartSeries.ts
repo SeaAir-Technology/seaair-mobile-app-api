@@ -58,14 +58,6 @@ export function stateAt(
   return out;
 }
 
-export interface GroupedStateRow {
-  label: string;
-  v: number | string;
-  // Set on alarm-typed fields. The tooltip renders these as Yes/No, groups
-  // them after the data rows, and highlights the row when v is truthy.
-  alarm?: boolean;
-}
-
 // The latched *Alarm config flags plus the real-time pressure event fields.
 function isAlarmLeaf(leaf: string): boolean {
   return (
@@ -77,61 +69,79 @@ function isAlarmLeaf(leaf: string): boolean {
   );
 }
 
-// The proto misspells temperature two different ways (hvac.temperture,
-// config.tempreature). Those are wire field names we can't rename, but the
-// tooltip labels don't have to repeat them.
-const LEAF_SPELLING: Record<string, string> = {
-  temperture: 'temperature',
-  tempreature: 'temperature',
+const ALARM_LABELS: Record<string, string> = {
+  compressorShutdown: 'Compressor shutdown',
+  lowPressure: 'Low pressure',
+  lowVoltage: 'Low voltage',
+  highVoltage: 'High voltage',
 };
 
-function fixSpelling(label: string): string {
-  return label
-    .split('.')
-    .map((s) => LEAF_SPELLING[s] ?? s)
-    .join('.');
+// The machine's state at time t, shaped for the docked chart strip: known
+// leaves picked off a stateAt() snapshot by path suffix. Voltage arrives
+// already converted to volts by the analytics hook. Alarms combine the
+// real-time event fields and the latched *Alarm config flags, deduped, in
+// stable severity-agnostic order.
+export interface StripState {
+  at: number;
+  mode?: string; // raw enum: STANDBY, COOL, HEAT, HUMIDITY, FAN
+  temp?: number;
+  setpoint?: number;
+  humidity?: number;
+  targetHumidity?: number;
+  fanSpeed?: number;
+  compressorState?: string; // raw enum: ON, OFF
+  compressorSpeed?: number;
+  powerRate?: number;
+  powerTotal?: number;
+  voltage?: number; // volts
+  version?: string;
+  alarms: string[];
 }
 
-// Split a stateAt() snapshot into user-facing tooltip sections: anything
-// routed through a `config` node is a Setting, everything else is live State.
-// Labels are shortened — settings keep the path after `config.` (so fan.speed
-// and compressor.speed stay distinct) and state drops the message + device
-// prefix (e.g. syncDevice2Controller.hvac.). The controllerId leaf is just
-// the device's own id, so it is dropped.
-export function groupState(rows: Array<{ path: string; v: number | string }>): {
-  settings: GroupedStateRow[];
-  state: GroupedStateRow[];
-} {
-  const settings: GroupedStateRow[] = [];
-  const state: GroupedStateRow[] = [];
-  for (const row of rows) {
+export function cockpitAt(series: AnalyticsSeries, t: number): StripState {
+  const out: StripState = { at: t, alarms: [] };
+  const alarmSet = new Set<string>();
+  for (const row of stateAt(series, t)) {
     const segments = row.path.split('.');
     const leaf = segments[segments.length - 1];
-    if (leaf === 'controllerId') continue;
-    const alarm = isAlarmLeaf(leaf) ? { alarm: true } : {};
-    const configIdx = segments.indexOf('config');
-    if (configIdx >= 0 && configIdx < segments.length - 1) {
-      settings.push({
-        label: fixSpelling(segments.slice(configIdx + 1).join('.')),
-        v: row.v,
-        ...alarm,
-      });
+    const parent = segments[segments.length - 2];
+    const inConfig = segments.includes('config');
+    const n = typeof row.v === 'number' ? row.v : undefined;
+    const s = typeof row.v === 'string' ? row.v : undefined;
+    if (inConfig) {
+      if (leaf === 'mode' && s) out.mode = s;
+      else if (leaf === 'tempreature' && n) out.setpoint = n; // (sic); 0 = unset
+      else if (leaf === 'humidity' && n) out.targetHumidity = n;
+      else if (leaf === 'speed' && parent === 'fan' && n !== undefined) out.fanSpeed = n;
+      else if (leaf === 'speed' && parent === 'compressor' && n !== undefined) out.compressorSpeed = n;
+      else if (leaf === 'state' && parent === 'compressor' && s) out.compressorState = s;
+      else if (/Alarm$/.test(leaf) && n) {
+        const label = ALARM_LABELS[leaf.replace(/Alarm$/, '')];
+        if (label) alarmSet.add(label);
+      }
     } else {
-      state.push({
-        label: fixSpelling(
-          segments.length > 2 ? segments.slice(2).join('.') : leaf
-        ),
-        v: row.v,
-        ...alarm,
-      });
+      if (leaf === 'temperture' && n !== undefined) out.temp = n; // (sic)
+      else if (leaf === 'humidity' && n !== undefined) out.humidity = n;
+      else if (leaf === 'powerRate' && n !== undefined) out.powerRate = n;
+      else if (leaf === 'powerTotal' && n !== undefined) out.powerTotal = n;
+      else if (leaf === 'voltage' && n !== undefined) out.voltage = n;
+      else if (leaf === 'version' && s) out.version = s;
+      else if (ALARM_LABELS[leaf] && n) alarmSet.add(ALARM_LABELS[leaf]);
     }
   }
-  // Data rows first (alphabetical), then alarm rows grouped at the bottom.
-  const byGroup = (a: GroupedStateRow, b: GroupedStateRow) =>
-    Number(!!a.alarm) - Number(!!b.alarm) || a.label.localeCompare(b.label);
-  settings.sort(byGroup);
-  state.sort(byGroup);
-  return { settings, state };
+  out.alarms = Object.values(ALARM_LABELS).filter((l) => alarmSet.has(l));
+  return out;
+}
+
+// Newest sample timestamp across all series — what the strip shows when the
+// pointer isn't over the chart.
+export function latestT(series: AnalyticsSeries): number | null {
+  let max: number | null = null;
+  for (const points of Object.values(series)) {
+    const last = points[points.length - 1];
+    if (last && (max === null || last.t > max)) max = last.t;
+  }
+  return max;
 }
 
 export interface ModeSegment {
