@@ -20,6 +20,9 @@ export interface Message {
 export interface DecodedPayload {
   typeName: string;
   data: Record<string, unknown>;
+  // defaults:true view from the decoder: zero-valued enums (mode STANDBY,
+  // compressor ON) that proto3 omits from the wire are present here.
+  dataFull?: Record<string, unknown>;
 }
 
 export interface EnrichedMessage extends Message {

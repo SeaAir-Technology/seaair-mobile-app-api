@@ -185,9 +185,10 @@ describe('groupState', () => {
       row('syncDevice2Controller.hvac.temperture', 74),
       row('syncDevice2Controller.hvac.compressorShutdown', 1),
     ]);
-    expect(settings).toEqual([{ label: 'tempreature', v: 72 }]);
+    // Labels fix the proto's two misspellings of temperature
+    expect(settings).toEqual([{ label: 'temperature', v: 72 }]);
     expect(state).toEqual([
-      { label: 'temperture', v: 74 },
+      { label: 'temperature', v: 74 },
       { label: 'compressorShutdown', v: 1, alarm: true },
     ]);
   });
