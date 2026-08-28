@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useDeviceAnalytics } from '../../hooks/useDeviceAnalytics';
 import { Spinner } from '../../components/Spinner';
-import { ChartStateTooltip } from '../../components/ChartStateTooltip';
+import { ChartStateStrip } from '../../components/ChartStateStrip';
 import {
   LineChart,
   Line,
@@ -166,8 +166,14 @@ export function Analytics({
   const [windowExpr, setWindowExpr] = useState<string>('24h');
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
   const [activeComboId, setActiveComboId] = useState<ComboId>(COMBOS[0].id);
+  // Hovered chart timestamp, shared by both charts' docked state strips.
+  const [hoverT, setHoverT] = useState<number | null>(null);
   const { data, isLoading, error, refetch, dataUpdatedAt, isFetching } =
     useDeviceAnalytics(controllerId, windowExpr);
+
+  const handleChartMove = (s: { activeLabel?: string | number } | null): void =>
+    setHoverT(typeof s?.activeLabel === 'number' ? s.activeLabel : null);
+  const handleChartLeave = (): void => setHoverT(null);
 
   // Enum-string series (mode, compressor state) feed the tooltip but can't be
   // drawn as lines, so keep the pickable list numeric-only.
@@ -255,7 +261,12 @@ export function Analytics({
               <>
                 <div style={{ width: '100%', height: 280 }}>
                   <ResponsiveContainer>
-                    <LineChart data={comboData} margin={CHART_MARGIN}>
+                    <LineChart
+                      data={comboData}
+                      margin={CHART_MARGIN}
+                      onMouseMove={handleChartMove}
+                      onMouseLeave={handleChartLeave}
+                    >
                       <CartesianGrid stroke="#eef0f3" strokeDasharray="3 3" />
                       {comboModes.map(
                         (s) =>
@@ -293,7 +304,8 @@ export function Analytics({
                         tick={{ fontSize: 11, fill: activeCombo.secondary.color }}
                       />
                       <Tooltip
-                        content={<ChartStateTooltip series={data.series} />}
+                        content={() => null}
+                        cursor={{ stroke: '#7a8497', strokeDasharray: '3 3' }}
                       />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                       <Line
@@ -328,6 +340,7 @@ export function Analytics({
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+                <ChartStateStrip series={data.series} hoverT={hoverT} />
                 <ModeLegend />
                 {(!comboPrimaryAvailable || !comboSecondaryAvailable) && (
                   <div className="text-xs text-amber-700 mt-2">
@@ -387,7 +400,12 @@ export function Analytics({
               </div>
               <div style={{ width: '100%', height: 280 }}>
                 <ResponsiveContainer>
-                  <LineChart data={chartData} margin={CHART_MARGIN}>
+                  <LineChart
+                    data={chartData}
+                    margin={CHART_MARGIN}
+                    onMouseMove={handleChartMove}
+                    onMouseLeave={handleChartLeave}
+                  >
                     <CartesianGrid stroke="#eef0f3" strokeDasharray="3 3" />
                     {chartModes.map(
                       (s) =>
@@ -416,7 +434,8 @@ export function Analytics({
                     />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip
-                      content={<ChartStateTooltip series={data.series} />}
+                      content={() => null}
+                      cursor={{ stroke: '#7a8497', strokeDasharray: '3 3' }}
                     />
                     <Line
                       type="monotone"
@@ -437,6 +456,7 @@ export function Analytics({
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+              <ChartStateStrip series={data.series} hoverT={hoverT} />
               <ModeLegend />
               <div className="text-xs text-ink-500 mt-2">
                 {chartData.length} samples · scanned {data.scanned} messages
