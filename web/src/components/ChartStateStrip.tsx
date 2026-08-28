@@ -56,24 +56,39 @@ export function ChartStateStrip({
     c.temp !== undefined && c.setpoint !== undefined ? c.temp - c.setpoint : undefined;
 
   return (
-    <div className="mt-2 bg-ink-50 border border-ink-200 rounded px-3 py-1.5 flex items-center gap-x-4 gap-y-1 flex-wrap">
-      <div
-        className="rounded px-2 py-0.5 self-stretch flex flex-col justify-center"
-        style={{ backgroundColor: theme.bg, border: `1px solid ${theme.border}` }}
-      >
+    // Phone: two decks — mode + timestamp header over a 3-column cell grid.
+    // md+: everything joins one flex row (the wrappers become display:
+    // contents), identical to the desktop strip.
+    <div className="mt-2 bg-ink-50 border border-ink-200 rounded px-3 py-1.5 flex flex-col gap-2 md:flex-row md:items-center md:gap-x-4 md:gap-y-1 md:flex-wrap">
+      <div className="flex items-center justify-between gap-2 md:contents">
         <div
-          className="text-[10px] uppercase tracking-wide whitespace-nowrap"
-          style={{ color: theme.label }}
+          className="rounded px-2 py-0.5 md:self-stretch flex flex-col justify-center"
+          style={{ backgroundColor: theme.bg, border: `1px solid ${theme.border}` }}
         >
-          Mode
+          <div
+            className="text-[10px] uppercase tracking-wide whitespace-nowrap"
+            style={{ color: theme.label }}
+          >
+            Mode
+          </div>
+          <div
+            className="text-[13px] font-semibold whitespace-nowrap"
+            style={{ color: theme.value }}
+          >
+            {c.mode ? titleCase(c.mode) : DASH}
+          </div>
         </div>
-        <div
-          className="text-[13px] font-semibold whitespace-nowrap"
-          style={{ color: theme.value }}
-        >
-          {c.mode ? titleCase(c.mode) : DASH}
+        <div className="text-right md:order-last md:ml-auto">
+          <div className="text-[10px] uppercase tracking-wide text-ink-400">
+            {hoverT === null ? 'Latest' : 'At'}
+          </div>
+          <div className="text-[12px] text-ink-600 tabular-nums whitespace-nowrap">
+            {new Date(t).toLocaleString()}
+            {c.version ? ` · fw ${c.version}` : ''}
+          </div>
         </div>
       </div>
+      <div className="grid grid-cols-3 gap-2 md:contents">
       <Cell
         label="Cabin → set"
         value={
@@ -115,7 +130,7 @@ export function ChartStateStrip({
         label="Volts"
         value={c.voltage !== undefined ? c.voltage.toFixed(2) : undefined}
       />
-      <div className="min-w-0">
+      <div className="min-w-0 col-span-3 md:col-span-1">
         <div className="text-[10px] uppercase tracking-wide text-ink-400">
           Alarms
         </div>
@@ -136,14 +151,6 @@ export function ChartStateStrip({
           </div>
         )}
       </div>
-      <div className="ml-auto text-right">
-        <div className="text-[10px] uppercase tracking-wide text-ink-400">
-          {hoverT === null ? 'Latest' : 'At'}
-        </div>
-        <div className="text-[12px] text-ink-600 tabular-nums whitespace-nowrap">
-          {new Date(t).toLocaleString()}
-          {c.version ? ` · fw ${c.version}` : ''}
-        </div>
       </div>
     </div>
   );
