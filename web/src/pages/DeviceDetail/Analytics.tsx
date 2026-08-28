@@ -20,6 +20,7 @@ import {
   modeSegments,
   alarmEdges,
 } from '../../lib/chartSeries';
+import { MODE_FILL } from '../../lib/modeColors';
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 
@@ -49,14 +50,6 @@ const COMBOS = [
 ] as const;
 
 type ComboId = (typeof COMBOS)[number]['id'];
-
-// Background shading per run mode. Standby stays white (no area).
-const MODE_FILL: Record<string, string> = {
-  COOL: '#dbeafe', // light blue
-  HEAT: '#fee2e2', // light red
-  HUMIDITY: '#dcfce7', // light green
-  FAN: '#ffedd5', // light orange
-};
 
 const CHART_MARGIN = { top: 14, right: 5, bottom: 5, left: 5 };
 

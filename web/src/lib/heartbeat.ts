@@ -1,22 +1,33 @@
-// Turn a decoded heartbeat payload into a small set of user-readable stats for
-// the Current State summary. The decoder returns a JSON tree (a BLE.Msg wrapper
+// Turn a decoded heartbeat payload into the structured data behind the
+// Current State cockpit. The decoder returns a JSON tree (a BLE.Msg wrapper
 // around an HVAC/Utility device, or a bare device), so — like the backend's
 // telemetry extraction — we walk the tree for the first node that looks like
-// device telemetry and pull the known fields off it. Anything missing is simply
-// omitted, so partial/unknown payloads degrade gracefully.
+// device telemetry and pull the known fields off it. Every field is optional:
+// the cockpit renders fixed slots and shows an em dash for anything missing,
+// so partial/unknown payloads degrade gracefully without tiles popping in
+// and out.
 
 import type { DecodedPayload } from './types';
 
-export interface StatItem {
-  label: string;
-  value: string;
-  tone?: 'normal' | 'good' | 'warn' | 'alarm';
-}
-
-export interface HeartbeatSummary {
+export interface CockpitData {
   kind: 'hvac' | 'utility';
   name?: string;
-  stats: StatItem[];
+  version?: string;
+  mode?: string; // raw enum: STANDBY, COOL, HEAT, HUMIDITY, FAN
+  fanSpeed?: number;
+  compressorState?: string; // raw enum: ON, OFF
+  compressorSpeed?: number;
+  temp?: number;
+  setpoint?: number;
+  humidity?: number;
+  targetHumidity?: number;
+  powerRate?: number;
+  powerTotal?: number;
+  voltageMv?: number;
+  battery?: number;
+  budgetEnabled?: boolean;
+  budgetLimit?: number;
+  adminPinSet?: boolean;
   alarms: string[];
 }
 
@@ -46,63 +57,79 @@ function findTelemetry(value: unknown, depth = 0): Telemetry | null {
 const num = (v: unknown): number | undefined =>
   typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 
-function titleCase(s: string): string {
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.trim() ? v.trim() : undefined;
+
+export function titleCase(s: string): string {
   return s.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function summarizeHeartbeat(decoded: DecodedPayload | null): HeartbeatSummary | null {
+export function formatVoltage(mv: number): string {
+  return `${(mv / 1000).toFixed(2)} V`;
+}
+
+// Decoder emits camelCase (the old snake_case checks never matched).
+// An alarm is active on a real-time event or a latched config flag.
+function extractAlarms(n: Record<string, any>): string[] {
+  const cfg = n.config ?? {};
+  const alarms: string[] = [];
+  if (n.compressorShutdown === true || cfg.compressorShutdownAlarm === true) alarms.push('Compressor shutdown');
+  if (n.lowPressure === true || cfg.lowPressureAlarm === true) alarms.push('Low pressure');
+  if (n.lowVoltage === true || cfg.lowVoltageAlarm === true) alarms.push('Low voltage');
+  if (n.highVoltage === true || cfg.highVoltageAlarm === true) alarms.push('High voltage');
+  return alarms;
+}
+
+export function extractCockpit(decoded: DecodedPayload | null): CockpitData | null {
   if (!decoded) return null;
   const found = findTelemetry(decoded.data);
   if (!found) return null;
 
   const n = found.node;
   const cfg = n.config && typeof n.config === 'object' ? n.config : {};
-  const name = typeof cfg.name === 'string' && cfg.name.trim() ? cfg.name.trim() : undefined;
-  const stats: StatItem[] = [];
-  const alarms: string[] = [];
-  const push = (label: string, value: string | undefined, tone?: StatItem['tone']): void => {
-    if (value !== undefined && value !== '') stats.push({ label, value, tone });
-  };
+  // Enums read from the defaults:true view when present: their zero values
+  // (mode STANDBY, compressor ON) are omitted from the wire, and without
+  // this a machine in standby would show the last non-standby mode — or
+  // none. Same tree shape as `data`, so the walk finds the matching node.
+  const fullNode = decoded.dataFull ? findTelemetry(decoded.dataFull)?.node : undefined;
+  const cfgFull =
+    fullNode?.config && typeof fullNode.config === 'object' ? fullNode.config : cfg;
+  // The firmware version rides on the sync wrapper, not the device node.
+  const version = str((decoded.data as Record<string, any>)?.syncDevice2Controller?.version);
 
   if (found.kind === 'hvac') {
-    const mode = typeof cfg.mode === 'string' ? titleCase(cfg.mode) : undefined;
-    push('Mode', mode);
-    const cur = num(n.temperture);
-    push('Temperature', cur !== undefined ? `${cur}°F` : undefined);
     const setpoint = num(cfg.tempreature); // setpoint (sic in proto); 0 = unset
-    push('Setpoint', setpoint && setpoint > 0 ? `${setpoint}°F` : undefined);
-    push('Humidity', num(n.humidity) !== undefined ? `${num(n.humidity)}%` : undefined);
-    const fan = num(cfg.fan?.speed);
-    push('Fan speed', fan !== undefined ? String(fan) : undefined);
-    const compSpeed = num(cfg.compressor?.speed);
-    const compState = typeof cfg.compressor?.state === 'string' ? titleCase(cfg.compressor.state) : undefined;
-    if (compState || compSpeed !== undefined) {
-      const label = compState
-        ? `${compState}${compSpeed !== undefined ? ` (${compSpeed})` : ''}`
-        : String(compSpeed);
-      push('Compressor', label);
-    }
-    const rate = num(n.powerRate);
-    push('Power rate', rate !== undefined ? rate.toFixed(1) : undefined);
-    const total = num(n.powerTotal);
-    push('Power total', total !== undefined ? total.toFixed(1) : undefined);
-    const mv = num(n.voltage);
-    push('Voltage', mv !== undefined ? `${(mv / 1000).toFixed(2)} V` : undefined);
-    // Decoder emits camelCase (the old snake_case checks never matched).
-    // A chip shows for a real-time event or a latched alarm.
-    const alarmCfg = n.config ?? {};
-    if (n.compressorShutdown === true || alarmCfg.compressorShutdownAlarm === true) alarms.push('Compressor shutdown');
-    if (n.lowPressure === true || alarmCfg.lowPressureAlarm === true) alarms.push('Low pressure');
-    if (n.lowVoltage === true || alarmCfg.lowVoltageAlarm === true) alarms.push('Low voltage');
-    if (n.highVoltage === true || alarmCfg.highVoltageAlarm === true) alarms.push('High voltage');
-  } else {
-    push('Temperature', num(n.temperature) !== undefined ? `${num(n.temperature)}°F` : undefined);
-    push('Humidity', num(n.humidity) !== undefined ? `${num(n.humidity)}%` : undefined);
-    const batt = num(n.battery);
-    push('Battery', batt !== undefined ? `${batt}%` : undefined, batt !== undefined && batt < 20 ? 'warn' : 'good');
-    const mv = num(n.voltage);
-    push('Voltage', mv !== undefined ? `${(mv / 1000).toFixed(2)} V` : undefined);
+    const targetHumidity = num(cfg.humidity);
+    return {
+      kind: 'hvac',
+      name: str(cfg.name),
+      version,
+      mode: str(cfgFull.mode) ?? str(cfg.mode),
+      fanSpeed: num(cfg.fan?.speed),
+      compressorState: str(cfgFull.compressor?.state) ?? str(cfg.compressor?.state),
+      compressorSpeed: num(cfg.compressor?.speed),
+      temp: num(n.temperture),
+      setpoint: setpoint && setpoint > 0 ? setpoint : undefined,
+      humidity: num(n.humidity),
+      targetHumidity: targetHumidity && targetHumidity > 0 ? targetHumidity : undefined,
+      powerRate: num(n.powerRate),
+      powerTotal: num(n.powerTotal),
+      voltageMv: num(n.voltage),
+      budgetEnabled: typeof cfg.budget?.enabled === 'boolean' ? cfg.budget.enabled : undefined,
+      budgetLimit: num(cfg.budget?.limit),
+      adminPinSet: typeof n.adminPinSet === 'boolean' ? n.adminPinSet : undefined,
+      alarms: extractAlarms(n),
+    };
   }
 
-  return { kind: found.kind, name, stats, alarms };
+  return {
+    kind: 'utility',
+    name: str(cfg.name),
+    version,
+    temp: num(n.temperature),
+    humidity: num(n.humidity),
+    battery: num(n.battery),
+    voltageMv: num(n.voltage),
+    alarms: [],
+  };
 }

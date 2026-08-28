@@ -3,7 +3,17 @@ import { useDeviceState } from '../../hooks/useDeviceState';
 import { ProtoTree } from '../../components/ProtoTree';
 import { Spinner } from '../../components/Spinner';
 import { formatRelativeTime, formatTimestamp } from '../../lib/format';
-import { summarizeHeartbeat, type StatItem } from '../../lib/heartbeat';
+import {
+  extractCockpit,
+  titleCase,
+  formatVoltage,
+  type CockpitData,
+} from '../../lib/heartbeat';
+import { modeTheme } from '../../lib/modeColors';
+
+// Em dash for any absent value: every slot always renders, so nothing pops
+// in or out and the eye always lands in the same place.
+const DASH = '—';
 
 export function CurrentState({
   controllerId,
@@ -25,7 +35,7 @@ export function CurrentState({
   }
   if (!data) return <div />;
 
-  const summary = data.latest ? summarizeHeartbeat(data.latest.decoded) : null;
+  const cockpit = data.latest ? extractCockpit(data.latest.decoded) : null;
 
   return (
     <div className="p-4 space-y-3">
@@ -44,8 +54,8 @@ export function CurrentState({
           />
           {data.alive ? 'Alive' : 'Stale'}
         </span>
-        {summary?.name && (
-          <span className="text-sm font-medium text-ink-900">{summary.name}</span>
+        {cockpit?.name && (
+          <span className="text-sm font-medium text-ink-900">{cockpit.name}</span>
         )}
         {data.latest && (
           <span
@@ -56,6 +66,9 @@ export function CurrentState({
           </span>
         )}
         {isFetching && <Spinner />}
+        <span className="ml-auto text-[11px] font-mono text-ink-500 bg-ink-100 border border-ink-200 rounded px-2 py-0.5">
+          fw {cockpit?.version ?? DASH}
+        </span>
       </div>
 
       {!data.latest && (
@@ -64,28 +77,13 @@ export function CurrentState({
         </div>
       )}
 
-      {data.latest && summary && summary.alarms.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {summary.alarms.map((a) => (
-            <span
-              key={a}
-              className="inline-flex items-center gap-1 bg-red-50 text-red-700 border border-red-200 rounded px-2 py-0.5 text-xs font-medium"
-            >
-              {a} alarm
-            </span>
-          ))}
-        </div>
+      {data.latest && cockpit && cockpit.kind === 'hvac' && (
+        <HvacCockpit c={cockpit} />
       )}
-
-      {data.latest && summary && summary.stats.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {summary.stats.map((s) => (
-            <StatCard key={s.label} item={s} />
-          ))}
-        </div>
+      {data.latest && cockpit && cockpit.kind === 'utility' && (
+        <UtilityCockpit c={cockpit} />
       )}
-
-      {data.latest && summary && summary.stats.length === 0 && (
+      {data.latest && !cockpit && (
         <div className="text-ink-500 text-sm">
           No recognized telemetry in the latest heartbeat.
         </div>
@@ -113,21 +111,268 @@ export function CurrentState({
   );
 }
 
-function StatCard({ item }: { item: StatItem }): JSX.Element {
-  const tone =
-    item.tone === 'alarm'
-      ? 'text-red-700'
-      : item.tone === 'warn'
-      ? 'text-amber-700'
-      : item.tone === 'good'
+function SmallLabel({ children }: { children: string }): JSX.Element {
+  return (
+    <div className="text-[11px] uppercase tracking-wide text-ink-500">
+      {children}
+    </div>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | undefined;
+}): JSX.Element {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-ink-400">
+        {label}
+      </div>
+      <div
+        className={`text-[13px] font-semibold tabular-nums ${
+          value === undefined ? 'text-ink-300' : 'text-ink-800'
+        }`}
+      >
+        {value ?? DASH}
+      </div>
+    </div>
+  );
+}
+
+function HealthColumn({ c }: { c: CockpitData }): JSX.Element {
+  return (
+    <div className="border-l border-ink-100 px-4 py-3.5 flex flex-col justify-center gap-2">
+      {c.alarms.length === 0 ? (
+        <div className="flex items-center gap-2">
+          <svg
+            viewBox="0 0 20 20"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="#10b981"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="10" cy="10" r="7.5" />
+            <path d="M6.8 10.2l2.2 2.2 4.2-4.6" />
+          </svg>
+          <span className="text-xs font-medium text-ink-600">
+            No active alarms
+          </span>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <svg viewBox="0 0 20 20" width="14" height="14">
+            <path d="M10 2.5 18.5 17H1.5z" fill="#dc2626" />
+            <path
+              d="M10 8v4"
+              stroke="#ffffff"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+            <circle cx="10" cy="14.6" r="1" fill="#ffffff" />
+          </svg>
+          {c.alarms.map((a) => (
+            <span
+              key={a}
+              className="inline-flex items-center bg-red-50 text-red-700 border border-red-200 rounded px-1.5 py-0.5 text-[11px] font-medium"
+            >
+              {a}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-4">
+        <MiniStat label="Rate" value={c.powerRate?.toFixed(1)} />
+        <MiniStat label="Total" value={c.powerTotal?.toFixed(1)} />
+        <MiniStat
+          label="Volts"
+          value={c.voltageMv !== undefined ? formatVoltage(c.voltageMv) : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SettingsLine({ c }: { c: CockpitData }): JSX.Element {
+  const item = (label: string, value: string | undefined): JSX.Element => (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-ink-400">{label}</span>
+      <span
+        className={`font-medium tabular-nums ${
+          value === undefined ? 'text-ink-300' : 'text-ink-800'
+        }`}
+      >
+        {value ?? DASH}
+      </span>
+    </span>
+  );
+  return (
+    <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-xs px-0.5">
+      <span className="text-[11px] uppercase tracking-wide text-ink-400">
+        Settings
+      </span>
+      {item('setpoint', c.setpoint !== undefined ? `${c.setpoint}°F` : undefined)}
+      {item(
+        'humidity',
+        c.targetHumidity !== undefined ? `${c.targetHumidity}%` : undefined
+      )}
+      {item('fan', c.fanSpeed !== undefined ? String(c.fanSpeed) : undefined)}
+      {item(
+        'compressor',
+        c.compressorSpeed !== undefined ? String(c.compressorSpeed) : undefined
+      )}
+      {item(
+        'budget',
+        c.budgetEnabled === undefined ? undefined : c.budgetEnabled ? 'On' : 'Off'
+      )}
+      {item(
+        'limit',
+        c.budgetLimit !== undefined ? String(c.budgetLimit) : undefined
+      )}
+      {item(
+        'PIN',
+        c.adminPinSet === undefined ? undefined : c.adminPinSet ? 'Set' : 'Not set'
+      )}
+    </div>
+  );
+}
+
+// Option B "cockpit band": what is it doing, is it getting there, is anything
+// wrong — one strip, fixed slots. The mode block uses the same colors as the
+// analytics charts' background shading.
+function HvacCockpit({ c }: { c: CockpitData }): JSX.Element {
+  const theme = modeTheme(c.mode);
+  const delta =
+    c.temp !== undefined && c.setpoint !== undefined ? c.temp - c.setpoint : undefined;
+  const deltaText =
+    delta === undefined
+      ? DASH
+      : delta === 0
+      ? 'at setpoint'
+      : delta > 0
+      ? `+${delta}° to go`
+      : `${delta}° to go`;
+  const deltaClass =
+    delta === undefined
+      ? 'text-ink-300'
+      : delta === 0
       ? 'text-emerald-700'
+      : 'text-amber-700';
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-[180px_minmax(0,1fr)_260px] bg-white border border-ink-200 rounded overflow-hidden">
+        <div
+          className="px-4 py-3.5 flex flex-col justify-center gap-1"
+          style={{
+            backgroundColor: theme.bg,
+            borderRight: `1px solid ${theme.border}`,
+          }}
+        >
+          <div
+            className="text-[11px] uppercase tracking-wide"
+            style={{ color: theme.label }}
+          >
+            Mode
+          </div>
+          <div
+            className="text-[24px] leading-7 font-bold"
+            style={{ color: theme.value }}
+          >
+            {c.mode ? titleCase(c.mode) : DASH}
+          </div>
+          <div className="text-xs" style={{ color: theme.sub }}>
+            compressor {c.compressorState ? titleCase(c.compressorState) : DASH} ·{' '}
+            {c.compressorSpeed ?? DASH} · fan {c.fanSpeed ?? DASH}
+          </div>
+        </div>
+
+        <div className="px-5 py-3.5 flex items-center gap-5 min-w-0">
+          <div>
+            <SmallLabel>Cabin</SmallLabel>
+            <div className="text-[28px] leading-8 font-bold text-ink-900 tabular-nums">
+              {c.temp !== undefined ? `${c.temp}°F` : DASH}
+            </div>
+          </div>
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="#aab3c2"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M4 12h14" />
+            <path d="M13 6l6 6-6 6" />
+          </svg>
+          <div>
+            <SmallLabel>Setpoint</SmallLabel>
+            <div className="text-[28px] leading-8 font-bold text-ink-500 tabular-nums">
+              {c.setpoint !== undefined ? `${c.setpoint}°F` : DASH}
+            </div>
+          </div>
+          <div className="ml-auto text-right">
+            <div className={`text-xs font-semibold tabular-nums ${deltaClass}`}>
+              {deltaText}
+            </div>
+            <div className="text-xs text-ink-400 tabular-nums">
+              humidity {c.humidity !== undefined ? `${c.humidity}%` : DASH} /{' '}
+              {c.targetHumidity !== undefined ? `${c.targetHumidity}%` : DASH}
+            </div>
+          </div>
+        </div>
+
+        <HealthColumn c={c} />
+      </div>
+      <SettingsLine c={c} />
+    </div>
+  );
+}
+
+function UtilityCockpit({ c }: { c: CockpitData }): JSX.Element {
+  const batteryClass =
+    c.battery === undefined
+      ? 'text-ink-300'
+      : c.battery < 20
+      ? 'text-amber-700'
       : 'text-ink-900';
   return (
-    <div className="bg-white border border-ink-200 rounded px-3 py-2">
-      <div className="text-[11px] uppercase tracking-wide text-ink-500 truncate">
-        {item.label}
+    <div className="grid grid-cols-[minmax(0,1fr)_260px] bg-white border border-ink-200 rounded overflow-hidden">
+      <div className="px-5 py-3.5 flex items-center gap-8">
+        <div>
+          <SmallLabel>Temperature</SmallLabel>
+          <div className="text-[28px] leading-8 font-bold text-ink-900 tabular-nums">
+            {c.temp !== undefined ? `${c.temp}°F` : DASH}
+          </div>
+        </div>
+        <div>
+          <SmallLabel>Humidity</SmallLabel>
+          <div className="text-[28px] leading-8 font-bold text-ink-900 tabular-nums">
+            {c.humidity !== undefined ? `${c.humidity}%` : DASH}
+          </div>
+        </div>
+        <div>
+          <SmallLabel>Battery</SmallLabel>
+          <div className={`text-[28px] leading-8 font-bold tabular-nums ${batteryClass}`}>
+            {c.battery !== undefined ? `${c.battery}%` : DASH}
+          </div>
+        </div>
       </div>
-      <div className={`text-lg font-semibold tabular-nums ${tone}`}>{item.value}</div>
+      <div className="border-l border-ink-100 px-4 py-3.5 flex flex-col justify-center gap-2">
+        <div className="flex gap-4">
+          <MiniStat
+            label="Volts"
+            value={c.voltageMv !== undefined ? formatVoltage(c.voltageMv) : undefined}
+          />
+        </div>
+      </div>
     </div>
   );
 }
