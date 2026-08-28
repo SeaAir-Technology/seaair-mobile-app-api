@@ -77,6 +77,21 @@ function isAlarmLeaf(leaf: string): boolean {
   );
 }
 
+// The proto misspells temperature two different ways (hvac.temperture,
+// config.tempreature). Those are wire field names we can't rename, but the
+// tooltip labels don't have to repeat them.
+const LEAF_SPELLING: Record<string, string> = {
+  temperture: 'temperature',
+  tempreature: 'temperature',
+};
+
+function fixSpelling(label: string): string {
+  return label
+    .split('.')
+    .map((s) => LEAF_SPELLING[s] ?? s)
+    .join('.');
+}
+
 // Split a stateAt() snapshot into user-facing tooltip sections: anything
 // routed through a `config` node is a Setting, everything else is live State.
 // Labels are shortened — settings keep the path after `config.` (so fan.speed
@@ -97,13 +112,15 @@ export function groupState(rows: Array<{ path: string; v: number | string }>): {
     const configIdx = segments.indexOf('config');
     if (configIdx >= 0 && configIdx < segments.length - 1) {
       settings.push({
-        label: segments.slice(configIdx + 1).join('.'),
+        label: fixSpelling(segments.slice(configIdx + 1).join('.')),
         v: row.v,
         ...alarm,
       });
     } else {
       state.push({
-        label: segments.length > 2 ? segments.slice(2).join('.') : leaf,
+        label: fixSpelling(
+          segments.length > 2 ? segments.slice(2).join('.') : leaf
+        ),
         v: row.v,
         ...alarm,
       });
