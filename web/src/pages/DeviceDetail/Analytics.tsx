@@ -16,7 +16,6 @@ import {
 } from 'recharts';
 import {
   mergeSeries,
-  numericPoints,
   modeSegments,
   alarmEdges,
 } from '../../lib/chartSeries';
@@ -164,9 +163,8 @@ export function Analytics({
   controllerId: number;
 }): JSX.Element {
   const [windowExpr, setWindowExpr] = useState<string>('24h');
-  const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
   const [activeComboId, setActiveComboId] = useState<ComboId>(COMBOS[0].id);
-  // Hovered chart timestamp, shared by both charts' docked state strips.
+  // Hovered chart timestamp, feeding the docked state strip.
   const [hoverT, setHoverT] = useState<number | null>(null);
   const { data, isLoading, error, refetch, dataUpdatedAt, isFetching } =
     useDeviceAnalytics(controllerId, windowExpr);
@@ -174,17 +172,6 @@ export function Analytics({
   const handleChartMove = (s: { activeLabel?: string | number } | null): void =>
     setHoverT(typeof s?.activeLabel === 'number' ? s.activeLabel : null);
   const handleChartLeave = (): void => setHoverT(null);
-
-  // Enum-string series (mode, compressor state) feed the tooltip but can't be
-  // drawn as lines, so keep the pickable list numeric-only.
-  const allSeries = (data?.seriesNames || []).filter(
-    (n) => numericPoints(data!.series[n]).length > 0
-  );
-  const active =
-    selectedSeries && allSeries.includes(selectedSeries)
-      ? selectedSeries
-      : allSeries[0] || null;
-  const chartData = data && active ? numericPoints(data.series[active]) : [];
 
   const activeCombo =
     COMBOS.find((c) => c.id === activeComboId) || COMBOS[0];
@@ -195,9 +182,7 @@ export function Analytics({
   const comboSecondaryAvailable = !!data?.series[activeCombo.secondary.path]?.length;
 
   const comboEnd = comboData.length ? comboData[comboData.length - 1].t : 0;
-  const chartEnd = chartData.length ? chartData[chartData.length - 1].t : 0;
   const comboModes = data ? modeSegments(data.series, comboEnd) : [];
-  const chartModes = data ? modeSegments(data.series, chartEnd) : [];
   const alarms = data ? alarmEdges(data.series) : [];
 
   return (
@@ -367,102 +352,6 @@ export function Analytics({
               </>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-ink-500">Series:</span>
-            {allSeries.length === 0 && (
-              <span className="text-xs text-ink-500">
-                No numeric fields found in window.
-              </span>
-            )}
-            {allSeries.map((name) => (
-              <button
-                key={name}
-                onClick={() => setSelectedSeries(name)}
-                className={`px-2 py-0.5 text-xs rounded font-mono ${
-                  active === name
-                    ? 'bg-ink-800 text-white'
-                    : 'border border-ink-300 text-ink-700'
-                }`}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-          {active && chartData.length > 0 && (
-            <div className="bg-white border border-ink-200 rounded p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-ink-500 font-mono">{active}</div>
-                <RefreshControl
-                  updatedAt={dataUpdatedAt}
-                  isFetching={isFetching}
-                  onRefresh={() => refetch()}
-                />
-              </div>
-              <div style={{ width: '100%', height: 280 }}>
-                <ResponsiveContainer>
-                  <LineChart
-                    data={chartData}
-                    margin={CHART_MARGIN}
-                    onMouseMove={handleChartMove}
-                    onMouseLeave={handleChartLeave}
-                  >
-                    <CartesianGrid stroke="#eef0f3" strokeDasharray="3 3" />
-                    {chartModes.map(
-                      (s) =>
-                        MODE_FILL[s.mode] && (
-                          <ReferenceArea
-                            key={`mode-${s.from}`}
-                            x1={s.from}
-                            x2={s.to}
-                            fill={MODE_FILL[s.mode]}
-                            fillOpacity={0.5}
-                            stroke="none"
-                          />
-                        )
-                    )}
-                    <XAxis
-                      dataKey="t"
-                      type="number"
-                      domain={['dataMin', 'dataMax']}
-                      tickFormatter={(t) =>
-                        new Date(t).toLocaleTimeString(undefined, {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      }
-                      tick={{ fontSize: 11 }}
-                    />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip
-                      content={() => null}
-                      cursor={{ stroke: '#7a8497', strokeDasharray: '3 3' }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="v"
-                      stroke="#1c2230"
-                      dot={false}
-                      strokeWidth={1.5}
-                    />
-                    {alarms.map((t) => (
-                      <ReferenceLine
-                        key={`alarm-${t}`}
-                        x={t}
-                        stroke="#dc2626"
-                        strokeDasharray="3 3"
-                        label={<AlarmFlag />}
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <ChartStateStrip series={data.series} hoverT={hoverT} />
-              <ModeLegend />
-              <div className="text-xs text-ink-500 mt-2">
-                {chartData.length} samples · scanned {data.scanned} messages
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
