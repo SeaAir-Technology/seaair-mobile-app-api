@@ -59,7 +59,7 @@ export function CurrentState({
         )}
         {data.latest && (
           <span
-            className="text-xs text-ink-500"
+            className="text-xs text-ink-500 order-last basis-full sm:order-none sm:basis-auto"
             title={formatTimestamp(data.latest.timestamp)}
           >
             last heartbeat {formatRelativeTime(data.latest.timestamp)}
@@ -144,7 +144,7 @@ function MiniStat({
 
 function HealthColumn({ c }: { c: CockpitData }): JSX.Element {
   return (
-    <div className="border-l border-ink-100 px-4 py-3.5 flex flex-col justify-center gap-2">
+    <div className="md:border-l border-ink-100 px-4 py-2.5 md:py-3.5 flex flex-row items-center justify-between gap-2 md:flex-col md:items-stretch md:justify-center">
       {c.alarms.length === 0 ? (
         <div className="flex items-center gap-2">
           <svg
@@ -266,36 +266,35 @@ function HvacCockpit({ c }: { c: CockpitData }): JSX.Element {
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-[180px_minmax(0,1fr)_260px] bg-white border border-ink-200 rounded overflow-hidden">
+      <div className="grid grid-cols-1 md:grid-cols-[180px_minmax(0,1fr)_260px] bg-white border border-ink-200 rounded overflow-hidden">
         <div
-          className="px-4 py-3.5 flex flex-col justify-center gap-1"
-          style={{
-            backgroundColor: theme.bg,
-            borderRight: `1px solid ${theme.border}`,
-          }}
+          className="px-4 py-3 md:py-3.5 flex items-center justify-between gap-2 border-b md:border-b-0 md:border-r md:flex-col md:items-start md:justify-center md:gap-1"
+          style={{ backgroundColor: theme.bg, borderColor: theme.border }}
         >
-          <div
-            className="text-[11px] uppercase tracking-wide"
-            style={{ color: theme.label }}
-          >
-            Mode
+          <div>
+            <div
+              className="text-[11px] uppercase tracking-wide"
+              style={{ color: theme.label }}
+            >
+              Mode
+            </div>
+            <div
+              className="text-[24px] leading-7 font-bold"
+              style={{ color: theme.value }}
+            >
+              {c.mode ? titleCase(c.mode) : DASH}
+            </div>
           </div>
-          <div
-            className="text-[24px] leading-7 font-bold"
-            style={{ color: theme.value }}
-          >
-            {c.mode ? titleCase(c.mode) : DASH}
-          </div>
-          <div className="text-xs" style={{ color: theme.sub }}>
+          <div className="text-xs text-right md:text-left" style={{ color: theme.sub }}>
             compressor {c.compressorState ? titleCase(c.compressorState) : DASH} ·{' '}
             {c.compressorSpeed ?? DASH} · fan {c.fanSpeed ?? DASH}
           </div>
         </div>
 
-        <div className="px-5 py-3.5 flex items-center gap-5 min-w-0">
+        <div className="px-4 md:px-5 py-3.5 flex items-center gap-3 md:gap-5 min-w-0 border-b border-ink-100 md:border-b-0">
           <div>
             <SmallLabel>Cabin</SmallLabel>
-            <div className="text-[28px] leading-8 font-bold text-ink-900 tabular-nums">
+            <div className="text-[26px] leading-7 md:text-[28px] md:leading-8 font-bold text-ink-900 tabular-nums">
               {c.temp !== undefined ? `${c.temp}°F` : DASH}
             </div>
           </div>
@@ -314,7 +313,7 @@ function HvacCockpit({ c }: { c: CockpitData }): JSX.Element {
           </svg>
           <div>
             <SmallLabel>Setpoint</SmallLabel>
-            <div className="text-[28px] leading-8 font-bold text-ink-500 tabular-nums">
+            <div className="text-[26px] leading-7 md:text-[28px] md:leading-8 font-bold text-ink-500 tabular-nums">
               {c.setpoint !== undefined ? `${c.setpoint}°F` : DASH}
             </div>
           </div>
@@ -344,23 +343,23 @@ function UtilityCockpit({ c }: { c: CockpitData }): JSX.Element {
       ? 'text-amber-700'
       : 'text-ink-900';
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_260px] bg-white border border-ink-200 rounded overflow-hidden">
-      <div className="px-5 py-3.5 flex items-center gap-8">
+    <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] bg-white border border-ink-200 rounded overflow-hidden">
+      <div className="px-4 md:px-5 py-3.5 flex items-center gap-5 md:gap-8 border-b border-ink-100 md:border-b-0">
         <div>
           <SmallLabel>Temperature</SmallLabel>
-          <div className="text-[28px] leading-8 font-bold text-ink-900 tabular-nums">
+          <div className="text-[26px] leading-7 md:text-[28px] md:leading-8 font-bold text-ink-900 tabular-nums">
             {c.temp !== undefined ? `${c.temp}°F` : DASH}
           </div>
         </div>
         <div>
           <SmallLabel>Humidity</SmallLabel>
-          <div className="text-[28px] leading-8 font-bold text-ink-900 tabular-nums">
+          <div className="text-[26px] leading-7 md:text-[28px] md:leading-8 font-bold text-ink-900 tabular-nums">
             {c.humidity !== undefined ? `${c.humidity}%` : DASH}
           </div>
         </div>
         <div>
           <SmallLabel>Battery</SmallLabel>
-          <div className={`text-[28px] leading-8 font-bold tabular-nums ${batteryClass}`}>
+          <div className={`text-[26px] leading-7 md:text-[28px] md:leading-8 font-bold tabular-nums ${batteryClass}`}>
             {c.battery !== undefined ? `${c.battery}%` : DASH}
           </div>
         </div>
