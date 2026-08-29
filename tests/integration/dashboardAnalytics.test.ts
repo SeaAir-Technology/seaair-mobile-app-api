@@ -12,7 +12,11 @@ vi.mock('../../src/middleware/requireDashboardAdmin', () => ({
 
 import { createApp } from '../../src/app';
 import { RateLimiter } from '../../src/rateLimiter';
-import { wrappedHvacHeartbeat, versionlessHvacHeartbeat } from '../helpers/proto';
+import {
+  wrappedHvacHeartbeat,
+  versionlessHvacHeartbeat,
+  idleHvacHeartbeat,
+} from '../helpers/proto';
 
 const SAVED = { broker: process.env.MESSAGE_BROKER, archive: process.env.ARCHIVE_ENABLED };
 
@@ -91,6 +95,30 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('STANDBY');
+  });
+
+  it('emits zero samples for always-populated numerics but not absent-when-zero ones', async () => {
+    process.env.ARCHIVE_ENABLED = 'false';
+    const getStreamHistory = vi.fn(async () => [
+      // Machine holding setpoint: powerRate 0, fan speed 0 (Auto) are dropped
+      // from the wire by proto3 but are real readings — without zero samples
+      // the strip pairs a stale 54.7A rate with a fresh compressor "Off".
+      { streamId: `${Date.now()}-0`, protobufPayload: idleHvacHeartbeat('Cabin Air') },
+    ]);
+    app.locals.messageBroker = { getStreamHistory };
+    app.locals.archiveStore = { getRange: vi.fn() };
+
+    const res = await request(app)
+      .get('/dashboard/api/devices/101/analytics')
+      .query({ window: '24h' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.series['syncDevice2Controller.hvac.powerRate'][0].v).toBe(0);
+    expect(res.body.series['syncDevice2Controller.hvac.powerTotal'][0].v).toBe(0);
+    expect(res.body.series['syncDevice2Controller.hvac.config.fan.speed'][0].v).toBe(0);
+    expect(res.body.series['syncDevice2Controller.hvac.config.compressor.speed'][0].v).toBe(0);
+    // voltage 0 means "no digipot fitted", not a 0V bus — stays absent
+    expect(res.body.series['syncDevice2Controller.hvac.voltage']).toBeUndefined();
   });
 
   it('omits unset string fields instead of emitting blank series values', async () => {

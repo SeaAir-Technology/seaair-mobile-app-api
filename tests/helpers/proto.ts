@@ -60,6 +60,29 @@ export function wrappedHvacHeartbeat(name: string, mode: number = 1): string {
   });
 }
 
+/**
+ * A wrapped heartbeat from a machine holding setpoint: compressor off, fan on
+ * Auto, drawing nothing. proto3 drops every zero from the wire (powerRate 0,
+ * powerTotal 0, fan.speed 0, voltage 0), which is exactly the shape that left
+ * the dashboard strip showing a stale non-zero powerRate next to a fresh
+ * compressor "Off".
+ */
+export function idleHvacHeartbeat(name: string): string {
+  // The zero-valued fields (powerRate, powerTotal, fan.speed, compressor.speed,
+  // voltage) are left off the object entirely: firmware nanopb omits proto3
+  // zeros from the wire, but protobufjs would encode an explicit `voltage: 0`.
+  return encodeBase64('BLE.Msg', {
+    syncDevice2Controller: {
+      hvac: {
+        // compressor.state 1 = OFF (ON is the zero value)
+        config: { name, mode: 2, fan: { alwaysOn: true }, compressor: { state: 1 } },
+        temperture: 75,
+        humidity: 52,
+      },
+    },
+  });
+}
+
 /** A wrapped heartbeat with no sync version set — matches current shipping
  * firmware, which doesn't populate SyncDevice2Controller.version. */
 export function versionlessHvacHeartbeat(name: string): string {

@@ -5,6 +5,13 @@ import { titleCase } from '../lib/heartbeat';
 
 const DASH = '—';
 
+// Speed 0 on the wire is the Auto setting, not "stopped" — the firmware picks
+// the actual speed from the temperature delta.
+function speedLabel(speed: number | undefined): string {
+  if (speed === undefined) return DASH;
+  return speed === 0 ? 'Auto' : String(speed);
+}
+
 function Cell({
   label,
   value,
@@ -118,9 +125,9 @@ export function ChartStateStrip({
           c.compressorState !== undefined ||
           c.compressorSpeed !== undefined ||
           c.fanSpeed !== undefined
-            ? `${c.compressorState ? titleCase(c.compressorState) : DASH}·${
-                c.compressorSpeed ?? DASH
-              } · ${c.fanSpeed ?? DASH}`
+            ? `${c.compressorState ? titleCase(c.compressorState) : DASH}·${speedLabel(
+                c.compressorSpeed
+              )} · ${speedLabel(c.fanSpeed)}`
             : undefined
         }
       />
