@@ -16,6 +16,7 @@ import {
   wrappedHvacHeartbeat,
   versionlessHvacHeartbeat,
   idleHvacHeartbeat,
+  runningHvacHeartbeat,
 } from '../helpers/proto';
 
 const SAVED = { broker: process.env.MESSAGE_BROKER, archive: process.env.ARCHIVE_ENABLED };
@@ -95,6 +96,42 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.series['syncDevice2Controller.hvac.config.mode'][0].v).toBe('STANDBY');
+  });
+
+  it('emits long-held archive change-points at both span ends, powerTotal end-only', async () => {
+    const now = Date.now();
+    const spanStart = now - 2 * 60 * 60 * 1000;
+    const spanEnd = spanStart + 15 * 60 * 1000; // machine ran steadily for 15 min
+    const getRange = vi.fn(async () => [
+      {
+        controllerId: '101',
+        ts: spanStart,
+        lastTs: spanEnd,
+        payloadRaw: runningHvacHeartbeat('Cabin Air'),
+      },
+    ]);
+    const getStreamHistory = vi.fn(async () => []);
+    app.locals.archiveStore = { getRange };
+    app.locals.messageBroker = { getStreamHistory };
+
+    const res = await request(app)
+      .get('/dashboard/api/devices/101/analytics')
+      .query({ window: '7d' });
+
+    expect(res.status).toBe(200);
+    // The fingerprint proves powerRate held for the whole span: a two-point
+    // step the chart can draw a line through, not an isolated point.
+    const rate = res.body.series['syncDevice2Controller.hvac.powerRate'];
+    expect(rate.map((p: { t: number }) => p.t)).toEqual([spanStart, spanEnd]);
+    expect(rate[0].v).toBeCloseTo(54.7);
+    // Mode/state strings span too, so shading segments start where the run did
+    const mode = res.body.series['syncDevice2Controller.hvac.config.mode'];
+    expect(mode.map((p: { t: number }) => p.t)).toEqual([spanStart, spanEnd]);
+    // powerTotal climbs within the span (latest-wins stores the end value), so
+    // it is only stamped at the end
+    const total = res.body.series['syncDevice2Controller.hvac.powerTotal'];
+    expect(total).toHaveLength(1);
+    expect(total[0].t).toBe(spanEnd);
   });
 
   it('emits zero samples for always-populated numerics but not absent-when-zero ones', async () => {

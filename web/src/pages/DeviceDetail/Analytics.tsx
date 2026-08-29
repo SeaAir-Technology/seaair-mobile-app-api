@@ -42,6 +42,9 @@ const COMBOS = [
       path: 'syncDevice2Controller.hvac.powerRate',
       label: 'powerRate',
       color: '#1c2230',
+      // Gaps in the rate line mean real comms outages (idle now reports 0),
+      // so they stay visible as breaks.
+      connectNulls: false,
     },
     secondary: { path: TEMP_PATH, label: 'temperture (°F)', color: '#ca8a04' },
   },
@@ -52,6 +55,9 @@ const COMBOS = [
       path: 'syncDevice2Controller.hvac.powerTotal',
       label: 'powerTotal',
       color: '#1c2230',
+      // An accumulator: a gap doesn't mean "off", so sparse change-point
+      // samples connect instead of leaving invisible isolated points.
+      connectNulls: true,
     },
     secondary: { path: TEMP_PATH, label: 'temperture (°F)', color: '#ca8a04' },
   },
@@ -429,6 +435,7 @@ export function Analytics({
                         stroke={activeCombo.primary.color}
                         dot={false}
                         strokeWidth={1.5}
+                        connectNulls={activeCombo.primary.connectNulls}
                       />
                       {/* White casing under the thermal gradient line so it
                           stays legible over the pastel mode shading. The
