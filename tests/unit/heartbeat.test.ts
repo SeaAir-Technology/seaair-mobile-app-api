@@ -136,12 +136,42 @@ describe('extractCockpit zero-valued enums', () => {
     expect(c?.mode).toBe('STANDBY');
   });
 
-  it('reports compressor ON via the defaults-aware decode', () => {
+  it('reports compressor ON via the defaults-aware decode when drawing', () => {
     const c = extractCockpit(
-      decodePayload(hvac({}, { compressor: { speed: 4, state: 0 } }))
+      decodePayload(hvac({ powerRate: 33.5 }, { compressor: { speed: 4, state: 0 } }))
     );
     expect(c?.compressorState).toBe('ON'); // enum: ON=0
     expect(c?.compressorSpeed).toBe(4);
+  });
+
+  it('reads a wire-omitted powerRate as a real zero via the defaults view', () => {
+    const c = extractCockpit(decodePayload(hvac({}, { mode: 0 })));
+    expect(c?.powerRate).toBe(0);
+  });
+});
+
+describe('effectiveCompressorState (pre-v3.2 firmware reports the config flag)', () => {
+  it('overrides a reported "Off" when the machine is clearly drawing', () => {
+    // The pre-v3.2 lie seen on HVAC-35e390: config flag OFF, 54.1A on the wire
+    const c = extractCockpit(
+      decodePayload(hvac({ powerRate: 54.1 }, { compressor: { speed: 3, state: 1 } }))
+    );
+    expect(c?.compressorState).toBe('ON');
+  });
+
+  it('overrides a reported "On" when nothing is drawing', () => {
+    const c = extractCockpit(
+      decodePayload(hvac({}, { compressor: { speed: 3, state: 0 } }))
+    );
+    // rate resolves to 0 via the defaults view -> not running
+    expect(c?.compressorState).toBe('OFF');
+  });
+
+  it('keeps fan-only draw below the threshold reading as off', () => {
+    const c = extractCockpit(
+      decodePayload(hvac({ powerRate: 5.5 }, { compressor: { speed: 3, state: 1 } }))
+    );
+    expect(c?.compressorState).toBe('OFF');
   });
 });
 

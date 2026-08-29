@@ -192,7 +192,7 @@ describe('cockpitAt', () => {
         [`${P}.config.compressor.state`]: one('ON'),
         [`${P}.temperture`]: one(74),
         [`${P}.humidity`]: one(66),
-        [`${P}.powerRate`]: one(4.2),
+        [`${P}.powerRate`]: one(34.2),
         [`${P}.powerTotal`]: one(128.5),
         [`${P}.voltage`]: one(14.18),
         ['syncDevice2Controller.version']: one('3.1'),
@@ -209,7 +209,7 @@ describe('cockpitAt', () => {
       compressorState: 'ON',
       temp: 74,
       humidity: 66,
-      powerRate: 4.2,
+      powerRate: 34.2,
       powerTotal: 128.5,
       voltage: 14.18,
       version: '3.1',
@@ -236,6 +236,32 @@ describe('cockpitAt', () => {
     expect(c.setpoint).toBeUndefined();
     expect(c.temp).toBeUndefined();
     expect(c.mode).toBeUndefined();
+  });
+
+  it('derives compressor state from the draw when the reported flag lies', () => {
+    // Pre-v3.2 firmware echoes the config flag: "OFF" while pulling 54.7A
+    const on = cockpitAt(
+      {
+        [`${P}.config.compressor.state`]: one('OFF'),
+        [`${P}.powerRate`]: one(54.7),
+      },
+      2_000
+    );
+    expect(on.compressorState).toBe('ON');
+
+    const off = cockpitAt(
+      {
+        [`${P}.config.compressor.state`]: one('ON'),
+        [`${P}.powerRate`]: one(0),
+      },
+      2_000
+    );
+    expect(off.compressorState).toBe('OFF');
+  });
+
+  it('falls back to the reported state when no rate sample exists', () => {
+    const c = cockpitAt({ [`${P}.config.compressor.state`]: one('OFF') }, 2_000);
+    expect(c.compressorState).toBe('OFF');
   });
 
   it('only sees samples at or before t', () => {
