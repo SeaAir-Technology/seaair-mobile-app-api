@@ -13,13 +13,22 @@ import {
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
+  Customized,
 } from 'recharts';
 import {
   mergeSeries,
   modeSegments,
   alarmEdges,
+  numericPoints,
 } from '../../lib/chartSeries';
 import { MODE_FILL } from '../../lib/modeColors';
+import {
+  TEMP_SCALES,
+  TempScaleKey,
+  tempDomain,
+  gradientStops,
+  segmentScales,
+} from '../../lib/tempScale';
 
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 
@@ -34,7 +43,7 @@ const COMBOS = [
       label: 'powerRate',
       color: '#1c2230',
     },
-    secondary: { path: TEMP_PATH, label: 'temperture (°F)', color: '#c2410c' },
+    secondary: { path: TEMP_PATH, label: 'temperture (°F)', color: '#ca8a04' },
   },
   {
     id: 'power-vs-temp',
@@ -44,13 +53,98 @@ const COMBOS = [
       label: 'powerTotal',
       color: '#1c2230',
     },
-    secondary: { path: TEMP_PATH, label: 'temperture (°F)', color: '#c2410c' },
+    secondary: { path: TEMP_PATH, label: 'temperture (°F)', color: '#ca8a04' },
   },
 ] as const;
 
 type ComboId = (typeof COMBOS)[number]['id'];
 
 const CHART_MARGIN = { top: 14, right: 5, bottom: 5, left: 5 };
+
+interface ScaleSpan {
+  from: number;
+  to: number;
+  scaleKey: TempScaleKey;
+}
+
+// The temperature line, drawn per mode span with that span's thermal
+// gradient over the white casing the recharts Line beneath provides. Rendered
+// through recharts' <Customized> so it can use the chart's own scales; the
+// chart injects xAxisMap/yAxisMap at render time.
+function TempGradientOverlay(props: {
+  xAxisMap?: Record<string, { scale: (v: number) => number }>;
+  yAxisMap?: Record<string, { scale: (v: number) => number }>;
+  rows: Array<{ t: number; secondary?: number }>;
+  spans: ScaleSpan[];
+  domain: [number, number] | null;
+  gradId: string;
+}): JSX.Element | null {
+  const { xAxisMap, yAxisMap, rows, spans, domain, gradId } = props;
+  const xScale = xAxisMap?.[Object.keys(xAxisMap)[0]]?.scale;
+  const yScale = yAxisMap?.right?.scale;
+  if (!xScale || !yScale || !domain) return null;
+  const [lo, hi] = domain;
+
+  const pts = rows.filter(
+    (r): r is { t: number; secondary: number } => r.secondary !== undefined
+  );
+  if (pts.length < 2) return null;
+
+  const paths: Array<{ d: string; scaleKey: TempScaleKey; key: string }> = [];
+  let idx = 0;
+  let prev: { t: number; secondary: number } | null = null;
+  for (const span of spans) {
+    const seg: Array<{ t: number; secondary: number }> = prev ? [prev] : [];
+    while (idx < pts.length && pts[idx].t < span.to) {
+      seg.push(pts[idx]);
+      idx++;
+    }
+    if (seg.length >= 2) {
+      const d = seg
+        .map(
+          (p, i) =>
+            `${i ? 'L' : 'M'}${xScale(p.t).toFixed(2)},${yScale(p.secondary).toFixed(2)}`
+        )
+        .join('');
+      paths.push({ d, scaleKey: span.scaleKey, key: `${span.scaleKey}-${span.from}` });
+    }
+    if (seg.length > 0) prev = seg[seg.length - 1];
+  }
+
+  const usedScales = Array.from(new Set(paths.map((p) => p.scaleKey)));
+  return (
+    <g>
+      <defs>
+        {usedScales.map((k) => (
+          <linearGradient
+            key={k}
+            id={`${gradId}-${k}`}
+            gradientUnits="userSpaceOnUse"
+            x1={0}
+            y1={yScale(lo)}
+            x2={0}
+            y2={yScale(hi)}
+          >
+            {gradientStops(TEMP_SCALES[k], lo, hi).map((s, i) => (
+              <stop key={i} offset={s.offset} stopColor={s.color} />
+            ))}
+          </linearGradient>
+        ))}
+      </defs>
+      {paths.map((p) => (
+        <path
+          key={p.key}
+          d={p.d}
+          fill="none"
+          stroke={`url(#${gradId}-${p.scaleKey})`}
+          strokeWidth={3.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      ))}
+    </g>
+  );
+}
 
 // Red triangle rendered above the plot at an alarm's x position, via
 // ReferenceLine's label slot (viewBox.x is the line's pixel x, viewBox.y the
@@ -185,6 +279,25 @@ export function Analytics({
   const comboModes = data ? modeSegments(data.series, comboEnd) : [];
   const alarms = data ? alarmEdges(data.series) : [];
 
+  // Auto-fit axis for the temperature line (min 8° span), and one thermal
+  // scale span per mode segment, stretched to cover the whole window so the
+  // line is colored edge to edge.
+  const tDomain = data
+    ? tempDomain(numericPoints(data.series[TEMP_PATH]).map((p) => p.v))
+    : null;
+  const scaleKeys = segmentScales(comboModes);
+  let tempSpans: ScaleSpan[] = comboModes.map((s, i) => ({
+    from: s.from,
+    to: s.to,
+    scaleKey: scaleKeys[i],
+  }));
+  if (tempSpans.length === 0) {
+    tempSpans = [{ from: -Infinity, to: Infinity, scaleKey: 'COOL' }];
+  } else {
+    tempSpans[0] = { ...tempSpans[0], from: -Infinity };
+    tempSpans[tempSpans.length - 1] = { ...tempSpans[tempSpans.length - 1], to: Infinity };
+  }
+
   return (
     <div className="p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -286,13 +399,28 @@ export function Analytics({
                       <YAxis
                         yAxisId="right"
                         orientation="right"
+                        domain={tDomain ?? ['auto', 'auto']}
                         tick={{ fontSize: 11, fill: activeCombo.secondary.color }}
                       />
                       <Tooltip
                         content={() => null}
                         cursor={{ stroke: '#7a8497', strokeDasharray: '3 3' }}
                       />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Legend
+                        wrapperStyle={{ fontSize: 11 }}
+                        payload={[
+                          {
+                            value: activeCombo.primary.label,
+                            type: 'line',
+                            color: activeCombo.primary.color,
+                          },
+                          {
+                            value: activeCombo.secondary.label,
+                            type: 'line',
+                            color: activeCombo.secondary.color,
+                          },
+                        ]}
+                      />
                       <Line
                         yAxisId="left"
                         type="monotone"
@@ -302,15 +430,31 @@ export function Analytics({
                         dot={false}
                         strokeWidth={1.5}
                       />
+                      {/* White casing under the thermal gradient line so it
+                          stays legible over the pastel mode shading. The
+                          colored line itself is the Customized overlay. */}
                       <Line
                         yAxisId="right"
-                        type="monotone"
+                        type="linear"
                         dataKey="secondary"
                         name={activeCombo.secondary.label}
-                        stroke={activeCombo.secondary.color}
+                        stroke="#ffffff"
+                        legendType="none"
                         dot={false}
-                        strokeWidth={1.5}
+                        strokeWidth={6.5}
                         connectNulls
+                        isAnimationActive={false}
+                      />
+                      <Customized
+                        key={`tempgrad-${activeCombo.id}`}
+                        component={
+                          <TempGradientOverlay
+                            rows={comboData}
+                            spans={tempSpans}
+                            domain={tDomain}
+                            gradId={`tempgrad-${activeCombo.id}`}
+                          />
+                        }
                       />
                       {alarms.map((t) => (
                         <ReferenceLine
