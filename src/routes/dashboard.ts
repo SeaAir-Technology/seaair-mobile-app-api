@@ -443,6 +443,21 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
       });
       walkTelemetryFields(decoded.dataFull ?? decoded.data, '', (path, value) => {
         if (typeof value === 'string') (series[path] ??= []).push({ t, v: value });
+        // Zero-suppressed numerics: proto3 omits zero-valued scalars from the
+        // wire, so the sparse walk above never emits them and the reading
+        // goes stale at its last non-zero sample — the strip showed a 54.7A
+        // powerRate next to a fresh compressor "Off". For leaves the firmware
+        // always populates, a zero in the defaults view is a real reading
+        // (rate 0 = drawing nothing, fan speed 0 = Auto), so emit it. Leaves
+        // where absence means "not fitted" (voltage on legacy boards) stay
+        // sparse-only. Non-zero values already came from the sparse walk.
+        else if (
+          typeof value === 'number' &&
+          value === 0 &&
+          ZERO_MEANINGFUL_LEAVES.test(path)
+        ) {
+          (series[path] ??= []).push({ t, v: 0 });
+        }
       });
     };
 
@@ -508,6 +523,13 @@ function parseWindow(s: string): number {
 // strings so free-text fields (config.name, wifi ssid/password) never leak
 // into the series.
 const STRING_LEAVES = new Set(['mode', 'state', 'status', 'resetStrategy', 'version']);
+
+// Numeric leaves whose zero is a real reading the firmware always populates
+// (populateHvacMessage sets them unconditionally), emitted from the
+// defaults:true view because proto3 drops zeros from the wire. Kept to an
+// allowlist so fields that are legitimately absent-when-zero (voltage on
+// non-digipot boards, utility battery) don't grow fake zero samples.
+const ZERO_MEANINGFUL_LEAVES = /\.(powerRate|powerTotal)$|\.config\.(fan|compressor)\.speed$/;
 
 // Numbers chart directly; booleans (pressure alarms, budget.enabled, …) are
 // emitted as 0/1 so they show up in the state tooltip and can be charted too.
