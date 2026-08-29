@@ -60,6 +60,22 @@ export function wrappedHvacHeartbeat(name: string, mode: number = 1): string {
   });
 }
 
+/** A wrapped heartbeat from a machine actively running: non-zero power
+ * readings alongside the usual config/telemetry. */
+export function runningHvacHeartbeat(name: string, rate = 54.7, total = 25.6): string {
+  return encodeBase64('BLE.Msg', {
+    syncDevice2Controller: {
+      hvac: {
+        config: { name, mode: 1, compressor: { speed: 3 } },
+        temperture: 75,
+        humidity: 52,
+        powerRate: rate,
+        powerTotal: total,
+      },
+    },
+  });
+}
+
 /**
  * A wrapped heartbeat from a machine holding setpoint: compressor off, fan on
  * Auto, drawing nothing. proto3 drops every zero from the wire (powerRate 0,

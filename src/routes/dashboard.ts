@@ -429,20 +429,36 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
     let scanned = 0;
     let source: 'archive+live' | 'live' = 'live';
 
-    const decodeInto = (payload: string, t: number): void => {
+    // Emit one payload's fields into the series at time t. `spanStart` marks
+    // an archived change-point that held unchanged from spanStart to t (its
+    // fingerprint proves every fingerprinted field was constant), so the same
+    // values are also emitted at the span start — a machine running steadily
+    // for 15 minutes becomes a two-point step instead of an isolated point
+    // the chart can't draw a line through. powerTotal is the exception: it is
+    // excluded from the fingerprint and climbs within the span (latest-wins
+    // stores the end value), so stamping it at the start would show the whole
+    // span's consumption arriving instantly.
+    const decodeInto = (payload: string, t: number, spanStart?: number): void => {
       const decoded = decodePayload(payload);
       if (!decoded) return;
       scanned++;
+      const emit = (path: string, v: number | string): void => {
+        const arr = (series[path] ??= []);
+        if (spanStart !== undefined && !path.endsWith('.powerTotal')) {
+          arr.push({ t: spanStart, v });
+        }
+        arr.push({ t, v });
+      };
       // Numbers/booleans come from the sparse decode so absent fields don't
       // become fake zero samples. Enum strings come from the defaults:true
       // view: their zero values (mode STANDBY, compressor ON) are omitted
       // from the wire, and skipping them would leave the series stuck on the
       // last non-zero value.
       walkTelemetryFields(decoded.data, '', (path, value) => {
-        if (typeof value === 'number') (series[path] ??= []).push({ t, v: value });
+        if (typeof value === 'number') emit(path, value);
       });
       walkTelemetryFields(decoded.dataFull ?? decoded.data, '', (path, value) => {
-        if (typeof value === 'string') (series[path] ??= []).push({ t, v: value });
+        if (typeof value === 'string') emit(path, value);
         // Zero-suppressed numerics: proto3 omits zero-valued scalars from the
         // wire, so the sparse walk above never emits them and the reading
         // goes stale at its last non-zero sample — the strip showed a 54.7A
@@ -456,7 +472,7 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
           value === 0 &&
           ZERO_MEANINGFUL_LEAVES.test(path)
         ) {
-          (series[path] ??= []).push({ t, v: 0 });
+          emit(path, 0);
         }
       });
     };
@@ -475,7 +491,11 @@ router.get('/devices/:controllerId/analytics', async (req: Request, res: Respons
         for (const item of items) {
           // Value reflects lastTs (latest-wins); cap at the live edge so an
           // archived run spanning the boundary doesn't overlap the live window.
-          decodeInto(item.payloadRaw, Math.min(item.lastTs ?? item.ts, liveEdge - 1));
+          const end = Math.min(item.lastTs ?? item.ts, liveEdge - 1);
+          const start = Math.max(item.ts, cutoff);
+          // Long-held change-points also emit at their span start (see
+          // decodeInto); short ones stay single samples.
+          decodeInto(item.payloadRaw, end, end - start >= 10_000 ? start : undefined);
         }
       }
     }
