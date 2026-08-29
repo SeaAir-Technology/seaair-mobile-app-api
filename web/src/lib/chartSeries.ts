@@ -1,4 +1,5 @@
 import type { AnalyticsSeries } from './types';
+import { effectiveCompressorState } from './heartbeat';
 
 type NumericPoint = { t: number; v: number };
 
@@ -130,6 +131,10 @@ export function cockpitAt(series: AnalyticsSeries, t: number): StripState {
     }
   }
   out.alarms = Object.values(ALARM_LABELS).filter((l) => alarmSet.has(l));
+  // Pre-v3.2 firmware reports the commanded config flag, not the live relay,
+  // so the state can say "Off" mid-draw; the power rate is authoritative when
+  // present (see effectiveCompressorState).
+  out.compressorState = effectiveCompressorState(out.compressorState, out.powerRate);
   return out;
 }
 

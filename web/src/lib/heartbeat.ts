@@ -68,6 +68,26 @@ export function formatVoltage(mv: number): string {
   return `${(mv / 1000).toFixed(2)} V`;
 }
 
+// Pre-v3.2 firmware fills config.compressor.state from the commanded config
+// flag rather than the live relay, so a machine can report "Off" while
+// drawing 54A. The power rate settles it: without the compressor the maximum
+// draw is ~13A (fan 5.5 + pump 7 + reverse valve 0.6) and with it the minimum
+// is ~32A (speed-1 compressor 25 + pump 7) on every firmware's amp table, so
+// 20A cleanly separates the two. When a rate reading exists, derive the state
+// from it — rate and state then can never contradict on screen; the reported
+// field is only trusted when there's no rate to judge by.
+export const COMPRESSOR_DRAW_THRESHOLD_A = 20;
+
+export function effectiveCompressorState(
+  reported: string | undefined,
+  powerRate: number | undefined
+): string | undefined {
+  if (powerRate !== undefined) {
+    return powerRate >= COMPRESSOR_DRAW_THRESHOLD_A ? 'ON' : 'OFF';
+  }
+  return reported;
+}
+
 // Decoder emits camelCase (the old snake_case checks never matched).
 // An alarm is active on a real-time event or a latched config flag.
 function extractAlarms(n: Record<string, any>): string[] {
@@ -100,20 +120,26 @@ export function extractCockpit(decoded: DecodedPayload | null): CockpitData | nu
   if (found.kind === 'hvac') {
     const setpoint = num(cfg.tempreature); // setpoint (sic in proto); 0 = unset
     const targetHumidity = num(cfg.humidity);
+    // hvac firmware always populates powerRate, so a wire-omitted rate is a
+    // real zero — read it from the defaults view rather than showing a dash.
+    const powerRate = num(n.powerRate) ?? num(fullNode?.powerRate);
     return {
       kind: 'hvac',
       name: str(cfg.name),
       version,
       mode: str(cfgFull.mode) ?? str(cfg.mode),
       fanSpeed: num(cfg.fan?.speed),
-      compressorState: str(cfgFull.compressor?.state) ?? str(cfg.compressor?.state),
+      compressorState: effectiveCompressorState(
+        str(cfgFull.compressor?.state) ?? str(cfg.compressor?.state),
+        powerRate
+      ),
       compressorSpeed: num(cfg.compressor?.speed),
       temp: num(n.temperture),
       setpoint: setpoint && setpoint > 0 ? setpoint : undefined,
       humidity: num(n.humidity),
       targetHumidity: targetHumidity && targetHumidity > 0 ? targetHumidity : undefined,
-      powerRate: num(n.powerRate),
-      powerTotal: num(n.powerTotal),
+      powerRate,
+      powerTotal: num(n.powerTotal) ?? num(fullNode?.powerTotal),
       voltageMv: num(n.voltage),
       budgetEnabled: typeof cfg.budget?.enabled === 'boolean' ? cfg.budget.enabled : undefined,
       budgetLimit: num(cfg.budget?.limit),
