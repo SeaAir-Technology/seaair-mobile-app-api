@@ -26,6 +26,7 @@ interface PerfData {
   suctionF: number;
   dischargeF: number;
   liquidF: number;
+  waterF: number;
   lowPsi: number;
   highPsi: number;
   valveSteps: number;
@@ -47,6 +48,7 @@ function useSimulatedPerf(): PerfData {
     suctionF: 48.9 + Math.sin(t * 0.5) * 0.8,
     dischargeF: 114.2 + Math.sin(t * 0.3) * 1.1,
     liquidF: 63.9 + Math.sin(t * 0.2) * 0.4,
+    waterF: 83.6 + Math.sin(t * 0.15) * 0.3,
     lowPsi: 43 + Math.sin(t * 0.5) * 0.6,
     highPsi: 138 + Math.sin(t * 0.3) * 1.5,
     valveSteps: Math.round(95 + Math.sin(t * 0.25) * 4),
@@ -101,6 +103,11 @@ export function SystemPerformance(): JSX.Element {
           <rect x={395} y={44} width={130} height={44} rx={6} fill="#fff" stroke={INK_300} strokeWidth={1.5} />
           <path d="M 407 66 h12 l7 -12 l9 21 l9 -21 l9 21 l9 -21 l9 21 l7 -12 h13" fill="none" stroke={INK_400} strokeWidth={2} />
           <text x={460} y={34} textAnchor="middle" style={BOXLBL} className="uppercase">Condenser</text>
+          {/* seawater temp at the condenser (hose NTC / NMEA when fitted) */}
+          <text x={460} y={112} textAnchor="middle" style={LABEL} className="uppercase">Water</text>
+          <text x={460} y={136} textAnchor="middle" style={{ ...VALUE, fill: INK_900 }} className="tabular-nums">
+            {d.waterF.toFixed(1)}°F
+          </text>
 
           {/* evaporator — temperature intentionally not shown */}
           <rect x={395} y={250} width={130} height={44} rx={6} fill="#fff" stroke={INK_300} strokeWidth={1.5} />
