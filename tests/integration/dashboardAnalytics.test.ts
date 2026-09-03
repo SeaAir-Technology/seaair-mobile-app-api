@@ -17,6 +17,8 @@ import {
   versionlessHvacHeartbeat,
   idleHvacHeartbeat,
   runningHvacHeartbeat,
+  budgetedHvacHeartbeat,
+  budgetDisabledHvacHeartbeat,
 } from '../helpers/proto';
 
 const SAVED = { broker: process.env.MESSAGE_BROKER, archive: process.env.ARCHIVE_ENABLED };
@@ -156,6 +158,31 @@ describe('GET /dashboard/api/devices/:id/analytics', () => {
     expect(res.body.series['syncDevice2Controller.hvac.config.compressor.speed'][0].v).toBe(0);
     // voltage 0 means "no digipot fitted", not a 0V bus — stays absent
     expect(res.body.series['syncDevice2Controller.hvac.voltage']).toBeUndefined();
+    // no Budget submessage on the wire -> no fake enabled=0 samples either
+    expect(res.body.series['syncDevice2Controller.hvac.config.budget.enabled']).toBeUndefined();
+  });
+
+  it('emits budget config, including the zero when budget mode turns off', async () => {
+    process.env.ARCHIVE_ENABLED = 'false';
+    const now = Date.now();
+    const getStreamHistory = vi.fn(async () => [
+      // newest-first, like Redis: budget switched off after a budgeted run.
+      // `enabled: false` is a proto3 zero dropped from the wire — without the
+      // defaults-view zero the strip would show the run as budgeted forever.
+      { streamId: `${now}-0`, protobufPayload: budgetDisabledHvacHeartbeat('Cabin Air', 40) },
+      { streamId: `${now - 60_000}-0`, protobufPayload: budgetedHvacHeartbeat('Cabin Air', 40, 25.6) },
+    ]);
+    app.locals.messageBroker = { getStreamHistory };
+    app.locals.archiveStore = { getRange: vi.fn() };
+
+    const res = await request(app)
+      .get('/dashboard/api/devices/101/analytics')
+      .query({ window: '24h' });
+
+    expect(res.status).toBe(200);
+    const enabled = res.body.series['syncDevice2Controller.hvac.config.budget.enabled'];
+    expect(enabled.map((p: { v: number }) => p.v)).toEqual([1, 0]);
+    expect(res.body.series['syncDevice2Controller.hvac.config.budget.limit'][0].v).toBe(40);
   });
 
   it('omits unset string fields instead of emitting blank series values', async () => {
