@@ -76,6 +76,37 @@ export function runningHvacHeartbeat(name: string, rate = 54.7, total = 25.6): s
   });
 }
 
+/** A running heartbeat with budget mode on: powerTotal is the budget counter,
+ * so total ÷ limit is the fraction of the run's budget used. */
+export function budgetedHvacHeartbeat(name: string, limit = 40, total = 25.6): string {
+  return encodeBase64('BLE.Msg', {
+    syncDevice2Controller: {
+      hvac: {
+        config: { name, mode: 1, budget: { enabled: true, limit }, compressor: { speed: 3 } },
+        temperture: 75,
+        humidity: 52,
+        powerRate: 54.7,
+        powerTotal: total,
+      },
+    },
+  });
+}
+
+/** A heartbeat after budget mode is switched off: the Budget submessage stays
+ * on the wire (limit is still set) but `enabled: false` is a proto3 zero and
+ * is dropped — the shape that would leave the series stuck on enabled=1. */
+export function budgetDisabledHvacHeartbeat(name: string, limit = 40): string {
+  return encodeBase64('BLE.Msg', {
+    syncDevice2Controller: {
+      hvac: {
+        config: { name, mode: 1, budget: { limit } },
+        temperture: 75,
+        humidity: 52,
+      },
+    },
+  });
+}
+
 /**
  * A wrapped heartbeat from a machine holding setpoint: compressor off, fan on
  * Auto, drawing nothing. proto3 drops every zero from the wire (powerRate 0,

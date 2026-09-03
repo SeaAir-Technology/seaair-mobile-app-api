@@ -1,4 +1,4 @@
-import { cockpitAt, latestT } from '../lib/chartSeries';
+import { budgetUsedPct, cockpitAt, latestT } from '../lib/chartSeries';
 import type { AnalyticsSeries } from '../lib/types';
 import { modeTheme } from '../lib/modeColors';
 import { titleCase } from '../lib/heartbeat';
@@ -59,6 +59,7 @@ export function ChartStateStrip({
   if (t === null) return null;
   const c = cockpitAt(series, t);
   const theme = modeTheme(c.mode);
+  const budgetPct = budgetUsedPct(c);
   const delta =
     c.temp !== undefined && c.setpoint !== undefined ? c.temp - c.setpoint : undefined;
 
@@ -133,6 +134,15 @@ export function ChartStateStrip({
       />
       <Cell label="Rate" value={c.powerRate?.toFixed(1)} />
       <Cell label="Total" value={c.powerTotal?.toFixed(1)} />
+      {/* powerTotal counted against the run's budget limit — a machine at
+          100% has hit its budget and cycles down until the counter resets. */}
+      {c.budgetEnabled && (
+        <Cell
+          label="Budget"
+          value={budgetPct !== undefined ? `${Math.round(budgetPct)}%` : undefined}
+          tone={budgetPct !== undefined && budgetPct >= 90 ? 'amber' : undefined}
+        />
+      )}
       <Cell
         label="Volts"
         value={c.voltage !== undefined ? c.voltage.toFixed(2) : undefined}

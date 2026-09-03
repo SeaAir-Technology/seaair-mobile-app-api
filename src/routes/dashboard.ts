@@ -549,7 +549,10 @@ const STRING_LEAVES = new Set(['mode', 'state', 'status', 'resetStrategy', 'vers
 // defaults:true view because proto3 drops zeros from the wire. Kept to an
 // allowlist so fields that are legitimately absent-when-zero (voltage on
 // non-digipot boards, utility battery) don't grow fake zero samples.
-const ZERO_MEANINGFUL_LEAVES = /\.(powerRate|powerTotal)$|\.config\.(fan|compressor)\.speed$/;
+// budget.enabled is included so turning budget mode off (false → dropped from
+// the wire) emits a real 0 instead of leaving the series stuck on 1; the
+// defaults view only carries it when the Budget config message is present.
+const ZERO_MEANINGFUL_LEAVES = /\.(powerRate|powerTotal)$|\.config\.(fan|compressor)\.speed$|\.config\.budget\.enabled$/;
 
 // Numbers chart directly; booleans (pressure alarms, budget.enabled, …) are
 // emitted as 0/1 so they show up in the state tooltip and can be charted too.

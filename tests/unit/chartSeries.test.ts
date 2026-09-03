@@ -4,6 +4,7 @@ import {
   medianInterval,
   stateAt,
   cockpitAt,
+  budgetUsedPct,
   latestT,
   modeSegments,
   alarmEdges,
@@ -270,6 +271,46 @@ describe('cockpitAt', () => {
       3_000
     );
     expect(c.temp).toBe(70);
+  });
+
+  it('picks up budget config, treating enabled=0 as off and limit 0 as unset', () => {
+    const on = cockpitAt(
+      {
+        [`${P}.config.budget.enabled`]: one(1),
+        [`${P}.config.budget.limit`]: one(40),
+      },
+      2_000
+    );
+    expect(on.budgetEnabled).toBe(true);
+    expect(on.budgetLimit).toBe(40);
+
+    const off = cockpitAt({ [`${P}.config.budget.enabled`]: one(0) }, 2_000);
+    expect(off.budgetEnabled).toBe(false);
+
+    const noLimit = cockpitAt({ [`${P}.config.budget.limit`]: one(0) }, 2_000);
+    expect(noLimit.budgetLimit).toBeUndefined();
+  });
+});
+
+describe('budgetUsedPct', () => {
+  const base = { at: 0, alarms: [] as string[] };
+
+  it('is powerTotal over the limit when budget mode is on', () => {
+    expect(
+      budgetUsedPct({ ...base, budgetEnabled: true, budgetLimit: 40, powerTotal: 25.6 })
+    ).toBeCloseTo(64);
+  });
+
+  it('is undefined with budget off, no limit, or no total', () => {
+    expect(
+      budgetUsedPct({ ...base, budgetEnabled: false, budgetLimit: 40, powerTotal: 25.6 })
+    ).toBeUndefined();
+    expect(
+      budgetUsedPct({ ...base, budgetEnabled: true, powerTotal: 25.6 })
+    ).toBeUndefined();
+    expect(
+      budgetUsedPct({ ...base, budgetEnabled: true, budgetLimit: 40 })
+    ).toBeUndefined();
   });
 });
 

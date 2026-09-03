@@ -94,9 +94,21 @@ export interface StripState {
   compressorSpeed?: number;
   powerRate?: number;
   powerTotal?: number;
+  budgetEnabled?: boolean;
+  budgetLimit?: number;
   voltage?: number; // volts
   version?: string;
   alarms: string[];
+}
+
+// powerTotal is the firmware's budget counter (Budget.reset_strategy controls
+// when it resets), so with budget mode on, used ÷ limit is the fraction of the
+// run's budget consumed — the machine cycles down when it reaches 100%.
+export function budgetUsedPct(s: StripState): number | undefined {
+  if (!s.budgetEnabled || !s.budgetLimit || s.powerTotal === undefined) {
+    return undefined;
+  }
+  return (s.powerTotal / s.budgetLimit) * 100;
 }
 
 export function cockpitAt(series: AnalyticsSeries, t: number): StripState {
@@ -116,6 +128,8 @@ export function cockpitAt(series: AnalyticsSeries, t: number): StripState {
       else if (leaf === 'speed' && parent === 'fan' && n !== undefined) out.fanSpeed = n;
       else if (leaf === 'speed' && parent === 'compressor' && n !== undefined) out.compressorSpeed = n;
       else if (leaf === 'state' && parent === 'compressor' && s) out.compressorState = s;
+      else if (leaf === 'enabled' && parent === 'budget' && n !== undefined) out.budgetEnabled = n !== 0;
+      else if (leaf === 'limit' && parent === 'budget' && n) out.budgetLimit = n;
       else if (/Alarm$/.test(leaf) && n) {
         const label = ALARM_LABELS[leaf.replace(/Alarm$/, '')];
         if (label) alarmSet.add(label);
