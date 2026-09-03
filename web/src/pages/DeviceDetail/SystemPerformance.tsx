@@ -63,6 +63,10 @@ const BOXLBL = { fontSize: 11, letterSpacing: '.05em', fill: INK_500 } as const;
 const SUB = { fontSize: 10, fill: INK_400 } as const;
 
 export function SystemPerformance(): JSX.Element {
+  // Collapsed by default while the panel runs on simulated data — it stays
+  // out of the way until expanded (or until real telemetry ships, when the
+  // default can flip to open).
+  const [open, setOpen] = useState(false);
   const d = useSimulatedPerf();
   const barW = 188;
   const fillW = Math.max(4, (d.valveSteps / d.valveRange) * barW);
@@ -71,25 +75,41 @@ export function SystemPerformance(): JSX.Element {
   return (
     <div className="px-4 pb-3">
       <div className="bg-white border border-ink-200 rounded overflow-hidden">
-        <div className="flex items-center gap-3 px-4 pt-2.5 pb-2 border-b border-ink-100 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className={`w-full flex items-center gap-3 px-4 pt-2.5 pb-2 flex-wrap text-left ${
+            open ? 'border-b border-ink-100' : ''
+          }`}
+        >
+          <span className="text-ink-400 text-xs w-3" aria-hidden>
+            {open ? '▾' : '▸'}
+          </span>
           <span className="text-[11px] uppercase tracking-wide text-ink-500">
             System Performance
           </span>
           <span className="text-[10px] font-semibold tracking-wide text-amber-800 bg-amber-100 border border-amber-200 rounded px-1.5 py-px">
             SIMULATED
           </span>
-          <span className="ml-auto flex items-baseline gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-ink-400">
-              Superheat
+          {open ? (
+            <span className="ml-auto flex items-baseline gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-ink-400">
+                Superheat
+              </span>
+              <span className="text-xl font-bold tabular-nums text-ink-900">
+                {d.superheatF.toFixed(1)}°F
+              </span>
+              <span className="text-[11px] text-ink-400">
+                target {d.targetF.toFixed(1)}
+              </span>
             </span>
-            <span className="text-xl font-bold tabular-nums text-ink-900">
-              {d.superheatF.toFixed(1)}°F
-            </span>
-            <span className="text-[11px] text-ink-400">
-              target {d.targetF.toFixed(1)}
-            </span>
-          </span>
-        </div>
+          ) : (
+            <span className="ml-auto text-xs text-ink-500 underline">Show</span>
+          )}
+        </button>
+
+        {open && (
 
         <svg viewBox="0 0 900 340" className="block w-full h-auto" aria-label="refrigerant circuit">
           {/* hot side: compressor top -> condenser -> down to EEV */}
@@ -165,6 +185,7 @@ export function SystemPerformance(): JSX.Element {
             </text>
           </g>
         </svg>
+        )}
       </div>
     </div>
   );
