@@ -10,3 +10,12 @@ body {
   background-color: theme('colors.ink.50');
   color: theme('colors.ink.900');
 }
+
+/* System Performance panel: moving-flow dashes on the refrigerant pipes */
+.perf-flow {
+  stroke-dasharray: 4 18;
+  animation: perf-dash 1.1s linear infinite;
+}
+@keyframes perf-dash {
+  to { stroke-dashoffset: -22; }
+}
