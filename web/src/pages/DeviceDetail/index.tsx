@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CurrentState } from './CurrentState';
+import { SystemPerformance } from './SystemPerformance';
 import { History } from './History';
 import { Analytics } from './Analytics';
 import { useMarkAllReceived } from '../../hooks/useDeviceMutations';
@@ -66,6 +67,7 @@ export function DeviceDetail({ controllerId, filters }: Props): JSX.Element {
         {tab === 'overview' && (
           <>
             <CurrentState controllerId={controllerId} />
+            <SystemPerformance />
             <div className="border-t border-ink-200 mx-4" />
             <div className="px-1 pt-2 pb-1">
               <div className="px-3 text-xs font-medium uppercase tracking-wide text-ink-500">
